@@ -619,7 +619,7 @@ finished=false
 while ! $finished && [ "$tries" -lt "$max" ]; do
   update_rate_log
   let tries+=1
-  echo ddrescue $opts  --log-rates=$rate_log \
+  ddrescue $opts  --log-rates=$rate_log \
     "$source" "$device" "$map_file"
   exit
   sleep 1
