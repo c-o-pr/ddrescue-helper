@@ -566,12 +566,13 @@ rate_log="$5"
 trim="${6:-false}"
 scrape="${7:-false}"
 
-update_rate_log() {
+next_rate_log() {
+  local rate_log="$1"
+  
   # ddrescue overwrites the rate log for any run that makes progress,
   # so give each run is own log file, named xxx-0...xxx-N
   # If ddrescue is "Finished" no rate log is output from subsequent runs. 
 
-  # GLOBAL rate_log 
   local last_log
   local c
   # Get name of latest rate log; squelch if none.
@@ -581,7 +582,7 @@ update_rate_log() {
   else
     # xxx-0 -> c=0+1 --> xxx-1
     let c=${last_log##*-}; let c++
-    rate_log="$rate_log-$c"
+    echo "$rate_log-$c"
   fi
 }
 
@@ -617,11 +618,9 @@ let tries=0
 let max=20
 finished=false
 while ! $finished && [ "$tries" -lt "$max" ]; do
-  update_rate_log
   let tries+=1
-  ddrescue $opts  --log-rates=$rate_log \
+  ddrescue $opts  --log-rates="$(next_rate_log $rate_log)" \
     "$source" "$device" "$map_file"
-  exit
   sleep 1
   if grep -F "Finished" "$map_file"; then finished=true; fi
 done
@@ -697,13 +696,13 @@ get_volume_uuid() {
 }
 
 get_volume_name() {
-  local dev="$1"
+  local device="$1"
 
   case $(get_OS) in
     macOS)
-      diskutil info "$dev" | \
+      diskutil info "$device" | \
         grep "Volume Name:" | \
-        sed -E 's/^.+: +([^ ].+)$/\1/'
+        sed -E 's/^.+: +(.+)$/\1/'
       ;;
     Linux)
       return 1
@@ -909,8 +908,8 @@ list_partitions() {
     macOS)
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't output "/dev/"
-      echo "INCLUDE EFI: $include_efi" 1>&2
-      echo "list_partitions() 1: $device" 1>&2
+      echo "INCLUDE ESP: $include_efi" 1>&2
+      echo "list_partitions(): $device" 1>&2
 
       # Parse out container disks (physical stores) and
       # Follow containers to the synthesized drive.
@@ -950,8 +949,8 @@ list_partitions() {
         grep "Container disk" | \
         sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
 
-      echo "list_partitions() 4: p=${p[@]}" 1>&2
-      echo "list_partitions() 5: c=${c[@]}" 1>&2
+      echo "list_partitions(): p=${p[@]}" 1>&2
+      echo "list_partitions(): c=${c[@]}" 1>&2
 
       # For all containers, process their content volumes
       v=""      
@@ -962,7 +961,7 @@ list_partitions() {
                   grep '^ *[1-9][0-9]*:' | \
                   sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         done
-        echo "list_partitions() 6: v=${v[@]}" 1>&2
+        echo "list_partitions(): v=${v[@]}" 1>&2
       fi
 
       if [ "$p" == "" -a "$v" == "" ]; then
@@ -1021,7 +1020,10 @@ unmount_device() {
           # :wq (write & quit
           EDITOR=vi
           let r=0
-          # THERE'S A NEEDED ESC CHARACTER EMBEDDED IN THESE COMMANDS
+          # fstab entires must list the correct volume type or
+          # they won't be honored by the system.
+          #
+          # THERE'S A NEEDED <ESC> CHARACTER EMBEDDED BEFORE :wq
           sudo vifs <<EOF1 > /dev/null 2>&1
 GA
 UUID=$volume_uuid none $fs_type rw,noauto # $volume_name $part:wq
