@@ -13,7 +13,7 @@ $(basename "$0") Usage:
   -m | -u | -f <device>
     -> unmount / mount / fsck
 
-  -c [ -N ] <label> <source> <destination>
+  -c [ -X ] <label> <source> <destination>
     -> copy
 
     <destination> = /dev/null to scan <source> producing a map.
@@ -80,10 +80,11 @@ $(basename "$0") Usage:
 
      The block map file created by -c can be used by -p and -Z.
 
-  -N No trimming during ddrescue.
-     For use with -c when <destination> is /dev/null (scan) to avoid
-     waiting for additional reads in likely bad areas that aren't
-     likely to afftect affected files reporting.
+     By default -c when <destination> is /dev/null (scan) doesn't scrape
+     to avoid waiting for additional reads in likely bad areas that aren't
+     likely to change afftect files reporting. Enable scan scrape with -X.
+
+  -X ddrescue Scrape during scan.
 
   -Z Zap blocks blocks listed as error by an existing block map.
      Uses dd to write specific discrete blocks in an attempt
@@ -361,7 +362,7 @@ sanity_check_blklist() {
       return 0
       ;;
     *)
-      echo "sanity_check_block_address(): unknown device type $device_type"
+      echo "sanity_check_block_address: unknown device type $device_type"
       return 1
       ;;
   esac
@@ -545,14 +546,14 @@ make_ddrescue_helper() {
   local helper_script="${1:-ddrescue.sh}"
 
   if ! which ddrescue; then
-    echo "make_ddrescue_helper(): need GNU ddrescue to copy"
+    echo "make_ddrescue_helper: need GNU ddrescue to copy"
     return 1
   fi
 
   # Don't let an old helper script bollacks the work
   if [ -s "$helper_script" ]; then
     if ! rm -f "$helper_script"; then
-      echo "make_ddrescue_helper(): error, coouldn't replace exosting helper"
+      echo "make_ddrescue_helper: error, coouldn't replace exosting helper"
       return 1
     fi
   fi
@@ -563,7 +564,7 @@ device="$2"
 map_file="$3"
 event_log="$4"
 rate_log="$5"
-trim="${6:-false}"
+trim="${6:-true}"
 scrape="${7:-false}"
 
 next_rate_log() {
@@ -596,7 +597,7 @@ for (( i=0; i<=4; i++ )); do
   if [ "${args[$i]}" == "" ]; then missing=true; fi
 done
 if $missing; then
-  echo "$(basename "$0"): copy(): missing parameter(s)"
+  echo "$(basename "$0"): copy: missing parameter(s)"
   echo "  source=\"$1\" device=\"$2\" map_file=\"$3\""
   echo "  event_log=\"$4\" rate_log=\"$5\""
   echo "  scrape_opt=\"$6\" trim_opt=\"$7\""
@@ -607,15 +608,15 @@ fi
 # -f force (allow output to /dev)
 # -n no scrape
 # -N no trim
-# -T x timeout
+# -T Xs Maximum time since last successful read allowed before giving up.
 # -r x read retries
-opts="-f -T 2s -r0"
+opts="-f -T 10s -r0"
 if ! $trim; then opts+=" -N"; fi
 if ! $scrape; then opts+=" -n"; fi
 opts+=" --log-events=$event_log"
 
 let tries=0
-let max=20
+let max=10
 finished=false
 while ! $finished && [ "$tries" -lt "$max" ]; do
   let tries+=1
@@ -645,7 +646,7 @@ copy() {
 
   local helper_script="./ddrescue.sh"
   make_ddrescue_helper "$helper_script"
-  echo "copy(): running ddrescue in $(pwd)"
+  echo "copy: running ddrescue in $(pwd)"
   sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
        "$trim" "$scrape"
@@ -672,7 +673,7 @@ resource_matches_map() {
       return 1
     fi
   else
-#    echo "resource_matches_map(): no map file: $map_file" > /dev/stderr
+#    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
     return 1
   fi
 }
@@ -793,8 +794,6 @@ is_device() {
     Linux)
       if $quiet; then
         lsblk -f "$device" > /dev/null
-      else
-        diskutil list "$device"
       fi
       ;;
     *)
@@ -863,7 +862,7 @@ get_device_from_ddrescue_map() {
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
   if [ "$x" == "" ]; then
-    echo "get_device_from_ddrescue_map(): map device = \"\"" > /dev/stderr
+    echo "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
     exit 1
   fi
   echo "$x"
@@ -879,7 +878,7 @@ strip_partition_id() {
       echo "$1" | sed 's/[0-9][0-9]*$//'
       ;;
     *)
-      echo "strip_partition_id() unknown OS"
+      echo "strip_partition_id unknown OS"
       ;;
   esac
 
@@ -909,7 +908,7 @@ list_partitions() {
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't output "/dev/"
       echo "INCLUDE ESP: $include_efi" 1>&2
-      echo "list_partitions(): $device" 1>&2
+#      echo "list_partitions: $device" 1>&2
 
       # Parse out container disks (physical stores) and
       # Follow containers to the synthesized drive.
@@ -949,8 +948,8 @@ list_partitions() {
         grep "Container disk" | \
         sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
 
-      echo "list_partitions(): p=${p[@]}" 1>&2
-      echo "list_partitions(): c=${c[@]}" 1>&2
+#      echo "list_partitions: p=${p[@]}" 1>&2
+#      echo "list_partitions: c=${c[@]}" 1>&2
 
       # For all containers, process their content volumes
       v=""      
@@ -961,11 +960,11 @@ list_partitions() {
                   grep '^ *[1-9][0-9]*:' | \
                   sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         done
-        echo "list_partitions(): v=${v[@]}" 1>&2
+#        echo "list_partitions: v=${v[@]}" 1>&2
       fi
 
       if [ "$p" == "" -a "$v" == "" ]; then
-        echo "list_partitions(): device has no eligible partitions" 1>&2
+        echo "list_partitions: device has no eligible partitions" 1>&2
       else
         echo ${p[@]} ${v[@]}
       fi
@@ -1001,11 +1000,11 @@ unmount_device() {
     macOS)
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't include "/dev/"
-#      echo unmount_device 1: "$device" "$(strip_partition_id "$device")"
-      partitions=( $(list_partitions "$device") )
-      echo "unmount_device: unmouonting ${partitions[@]}"
       local p
       local r
+      partitions=( $(list_partitions "$device") )
+#      echo unmount_device 1: "$device" "$(strip_partition_id "$device")"
+      echo "unmount_device: unmouonting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
@@ -1029,7 +1028,7 @@ GA
 UUID=$volume_uuid none $fs_type rw,noauto # $volume_name $part:wq
 EOF1
           let r+=$?
-          if [ $r -ne 0 ]; then echo "unmount_device(): *** vifs failed"; fi
+          if [ $r -ne 0 ]; then echo "unmount_device: *** vifs failed"; fi
           let result+=$r
         fi
         if is_mounted "$part"; then
@@ -1044,6 +1043,8 @@ EOF1
       return $result
       ;;
     Linux)
+      # get mount info and savein fstab
+      # sudo systemd-ummount device
       return 1
       ;;
     *)
@@ -1064,13 +1065,12 @@ mount_device() {
   # If device is drive, do so for all its partitions
   case $(get_OS) in
     macOS)
-      partitions=( $(list_partitions "$device") )
-      echo "mount_device: mouonting ${partitions[@]}"
-
-#      echo "$device" "$(strip_partition_id "$device")"
-#      echo ${partitions[@]}
       local p
       local r
+#      echo "$device" "$(strip_partition_id "$device")"
+      partitions=( $(list_partitions "$device") )
+#      echo ${partitions[@]}
+      echo "mount_device: mouonting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
@@ -1089,7 +1089,7 @@ mount_device() {
 dd:wq
 EOF2
           let r+=$?
-          if [ $r -ne 0 ]; then echo "mount_device(): *** vifs failed"; fi
+          if [ $r -ne 0 ]; then echo "mount_device: *** vifs failed"; fi
           let result+=$r
         fi
         if ! is_mounted "$part"; then
@@ -1102,6 +1102,9 @@ EOF2
       return $result
       ;;
     Linux)
+      # find saved mount info in fstab and remove, if can't find then
+      #   get LABEL, UUD, GID
+      # sudo systemd-mount -o uid=UID,gid=GID,rw device /media/USER/LABEL
       return 1
       ;;
     *)
@@ -1124,8 +1127,8 @@ fsck_device() {
   local fs_type
   let result=0
 
-  if [ $find_files ] && [ "$blklist" == "" -o ! -f "$blklist" ]; then 
-    echo "fsck_device(); missing block list for find files"
+  if $find_files && [ "$blklist" == "" -o ! -f "$blklist" ]; then 
+    echo "fsck_device; missing block list for find files"
     return 1
   fi
 
@@ -1164,7 +1167,7 @@ fsck_device() {
             let nr_checked+=1
             ;;
           *)
-            echo "fsck_device() Skipping $part, unknown filesystem"
+            echo "fsck_device Skipping $part, unknown filesystem"
             ;;
         esac
       done
@@ -1174,11 +1177,11 @@ fsck_device() {
       return $result
       ;;
     Linux)
-      if which fsck.hfs; then
+      if ! which fsck.hfs; then
         echo "Need a version of fsck for HFS+"
         return 1
       fi
-      sudo fsck.hfs -n -B "$blklist" "$device"
+      sudo fsck.hfs -f -y "$device"
       ;;
     *)
       return 1
@@ -1204,8 +1207,9 @@ Do_Summarize_Zap_Regions=false
 Do_Zap_Blocks=false
 #
 Opt_Trim=true
+Opt_Scrape=false
 
-while getopts ":cfhmNpsuzZ" Opt; do
+while getopts ":cfhmpsuzXZ" Opt; do
   case ${Opt} in
     c)
       # Copy and build block map
@@ -1220,7 +1224,7 @@ while getopts ":cfhmNpsuzZ" Opt; do
     m)
       Do_Mount=true
       ;;
-    N)
+    X)
       # For use with a scan copy (-c where destination=/dev/null) disable
       # ddrescue trimming of region following read error.
       #
@@ -1246,7 +1250,7 @@ while getopts ":cfhmNpsuzZ" Opt; do
       #
       # -N can also be used with a proper copy with the proviso that the copy
       # must be inherently incomplete.
-      Opt_Trim=false
+      Opt_Scrape=true
       ;;
     p)
       Do_Error_Files_Report=true
@@ -1337,7 +1341,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
       echo "Incompatible options (1-d)"
       exit 1
     fi
-    fsck_device "$Device"
+    fsck_device "$Device" false
   fi
 
   exit 0
@@ -1475,6 +1479,7 @@ if $Do_Copy; then
     if [ "$Copy_Dest" == "/dev/null" ]; then
       echo "Copy destination is /dev/null (scanning)"
     else
+      Opt_Scrape=true
       if resource_matches_map "$Copy_Dest" "$Map_File"; then
         if [ -s "$Copy_Dest" ]; then
           continuing=true;
@@ -1515,7 +1520,7 @@ if $Do_Copy; then
   fi
 
   if ! copy "$Copy_Source" "$Copy_Dest" "$Map_File" \
-            "$Event_Log" "$Rate_Log" "$Opt_Trim"; then
+            "$Event_Log" "$Rate_Log" "$Opt_Trim" "$Opt_Scrape"; then
     exit 1
   fi
 
@@ -1527,7 +1532,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
    $Do_Zap_Blocks || $Do_Summarize_Zap_Regions; then
 
   if \
-     $Do_Mount || $Do_Unmount || $Do_Fsck \
+     $Do_Mount || $Do_Unmount || $Do_Fsck || \
      $Do_Copy || $Do_Smart_Scan || \
      false; then
     echo "Incompatible options (3)"
