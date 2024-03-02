@@ -1103,7 +1103,7 @@ EOF2
       ;;
     Linux)
       # find saved mount info in fstab and remove, if can't find then
-      #   get LABEL, UUD, GID
+      #   get LABEL, UUD, GID, USERNAME
       # sudo systemd-mount -o uid=UID,gid=GID,rw device /media/USER/LABEL
       return 1
       ;;
