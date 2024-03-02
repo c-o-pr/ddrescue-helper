@@ -119,6 +119,9 @@ $(basename "$0") Usage:
   SEE GNU ddrescue manual
     https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html
 
+  SOURCE
+    https://github.com/c-o-pr/ddrescue-helper
+
 USAGE
 }
 
