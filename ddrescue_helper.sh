@@ -653,7 +653,7 @@ copy() {
   local helper_script="./ddrescue.sh"
   make_ddrescue_helper "$helper_script"
   echo "copy: running ddrescue in $(pwd)"
-  sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
+  echo sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
        "$trim" "$scrape"
   return $?
@@ -913,51 +913,74 @@ list_partitions() {
     macOS)
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't output "/dev/"
-      echo "PARTITION LIST INCLUDES ESP: $include_efi" 1>&2
-#      echo "list_partitions: $device" 1>&2
-
+      #
       # Parse out container disks (physical stores) and
       # Follow containers to the synthesized drive.
       # (not-container v. container)
+      # "Container diskxx" -> Contains
+      # "Physical Store" -> Contained
+      # Multiple containers are allowed.
+      # Containers cannot be nested.
 
-      if [ "$device" == "$(strip_partition_id "$device")" ]; then
-        echo "$device is a whole drive" 1>&2
-      else
-        echo "$device is a partition" 1>&2
-      fi
-
-# Determine if partition contains or is contained
-# "Container diskxx" -> Contains
-# "Physical Store" -> Contained
-# Multiple containers are allowed.
-# Containers cannot be nested.
-
-      # Find devices partitions, containers, and contained volmumes 
-      local p
+      echo "PARTITION LIST INCLUDES ESP: $include_efi" 1>&2
+#      echo "list_partitions: $device" 1>&2
+      local p=""
       local c
       local v
-      # EFI service partition never auto-mounted by OS default
-      # grep -v means DO NOT MATCH
-      if $include_efi; then
-        p=( $(diskutil list "$device" | \
-          grep -v -e "Container disk" | \
-          grep '^ *[1-9][0-9]*:' | \
-          sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
-      else
-        p=( $(diskutil list "$device" | \
-          grep -v -e "EFI EFI" -e "Container disk" | \
-          grep '^ *[1-9][0-9]*:' | \
-          sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
-      fi
 
-      c=( $(diskutil list "$device" | \
-        grep "Container disk" | \
-        sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
+      # The device is either a drive or a specific partition
+      if [ "$device" == "$(strip_partition_id "$device")" ]; then
+
+        echo "$device is a whole drive" 1>&2
+        # The EFI service parition is optionally included in the list
+        # It is never auto-mounted by default
+        # grep -v means invert match
+        if $include_efi; then
+          p=( $(diskutil list "$device" | \
+            grep -v -e "Container disk" | \
+            grep '^ *[1-9][0-9]*:' | \
+            sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
+        else
+          p=( $(diskutil list "$device" | \
+            grep -v -e "EFI EFI" -e "Container disk" | \
+            grep '^ *[1-9][0-9]*:' | \
+            sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
+        fi
+        # Get drive's containers, if any
+        c=( $(diskutil list "$device" | \
+          grep "Container disk" | \
+          sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
+
+      else
+      
+        echo "$device is a partition" 1>&2
+        # Get the one conmtainer, if any
+        p=( $(diskutil info "$device" | \
+          grep "APFS Container:" | \
+          sed -E 's/^.+(disk[0-9]+)$/\1/') )
+#        echo "list_partitions: p=${p[@]}" 1>&2
+
+        # No container, just a basic partition
+        if [ "$p" == "" ]; then
+          # Return supplied device minus "/dev/" to agree with
+          # output of diskutil for other cases
+          echo "${device#/dev/}"
+          return 0
+        else
+          # Is a container, so process it
+          c=( $(diskutil list "$p" | \
+            grep "Container disk" | \
+            sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
+#          echo "list_partitions: c=${c[@]}" 1>&2
+          # continue on to process the container
+        fi
+
+      fi
 
 #      echo "list_partitions: p=${p[@]}" 1>&2
 #      echo "list_partitions: c=${c[@]}" 1>&2
 
-      # For all containers, process their content volumes
+      # For all containers, process their contents as volumes
       v=""      
       if [ "$c" != "" ]; then
         for x in ${c[@]}; do
@@ -1138,6 +1161,8 @@ fsck_device() {
     return 1
   fi
 
+  # If <device> is a specific partition, check it.
+  # If a whole drive, check them all.
   case $(get_OS) in
     macOS)
       partitions=( $(list_partitions "$device" true) )

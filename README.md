@@ -119,7 +119,10 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Usability**
 
-- [ ] XXX Fix relative file path naming to be per CWD not the label folder
+- [ ] ADD auto unmount of destination drive and help with removal of stale fstab entires for the destination after copy is complete.
+- [ ] ADD /dev/ specific fstab entries to prevent automount; including adding and removal without a corresponding drive present.
+- [ ] ADD help for changing volume LABELs and partition/volume UUIDs.
+- [ ] ADD 
 - [ ] ADD Only auto unmount for copy not scan ?? maybe not
 - [ ] ADD Save the ddrecue work summaries for each run so that progress can be re-examined.
 - [ ] ADD Input a list of files to copy (source).
@@ -128,6 +131,7 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 - [ ] XXX fsck robustness assistance for corrupted volumes
 - [ ] ADD GPT / MBR / table recovery
 - [ ] ADD Partition superblock recovery
+- [ ] XXX Fix src/dst relative file path naming to be per CWD not the label folder
 - [ ] XXX Devices must be /dev qualified although this could be inferred
 - [ ] XXX Verify Label tolerates whitespace or disallow.
 - [ ] ADD selectable rate limit for -P
@@ -142,6 +146,7 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Documentation**
 
+- [ ] XXX Explain the importance of unmount.
 - [ ] ADD Explanation of the ESP
 - [ ] ADD basics of ddrescue, and device specification, inc. hazards
 - [ ] XXX Device id in OS may change between runs (doc)
