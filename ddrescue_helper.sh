@@ -580,16 +580,17 @@ next_rate_log_name() {
   
   local last_log
   local c
+  let c=0
   # Get name of latest rate log; squelch if none.
   last_log="$(ls -1 -t  ${rate_log}-* | head -1)" 2> /dev/null
   if [ "$last_log" == "" ]; then
     # XXX If more than 1000 rate logs the naming gets janky but it
     # will still work.
-    rate_log="$rate_log-000"
+    echo "${rate_log}-000"
   else
     # xxx-000 -> c=0+1 --> xxx-001
     let c=${last_log##*-}; let c++
-    $(printf ${rate_log}"%03d" $c)
+    echo $(printf "${rate_log}-%03d" $c)
   fi
 }
 
@@ -626,7 +627,7 @@ let max=10
 finished=false
 while ! $finished && [ "$tries" -lt "$max" ]; do
   let tries+=1
-  ddrescue $opts  --log-rates="$(next_rate_log $rate_log)" \
+  ddrescue $opts  --log-rates="$(next_rate_log_name $rate_log)" \
     "$source" "$device" "$map_file"
   sleep 1
   if grep -F "Finished" "$map_file"; then finished=true; fi
@@ -653,7 +654,7 @@ copy() {
   local helper_script="./ddrescue.sh"
   make_ddrescue_helper "$helper_script"
   echo "copy: running ddrescue in $(pwd)"
-  echo sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
+  sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
        "$trim" "$scrape"
   return $?
