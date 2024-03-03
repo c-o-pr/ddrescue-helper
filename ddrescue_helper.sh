@@ -388,8 +388,8 @@ ddrescue_map_bytes_to_blocks() {
   local len
   while IFS=" " read addr len x; do
 
-    addr=$(( $addr / blksize ))
-    len=$(( $len / blksize ))
+    addr=$(( addr / blksize ))
+    len=$(( len / blksize ))
 
     if  (( addr == 0 || len == 0 )); then continue; fi
 
@@ -438,12 +438,13 @@ create_ddrescue_error_blklist() {
     fi
   fi
   
-#  echo "$fsck_blklist"
+  echo "ERROR BLOCKLIST: $fsck_blklist"
 
   cat "$map_file" | \
-    grep -v \# | \
+    grep -v '^#' | \
+    grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
     grep -e - -e / -e \* | \
-    ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.regions" | \
+    ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.TMP" | \
     sort -n | \
     while IFS=" " read blk cnt; do
       let blk=$blk-$partition_offset
@@ -570,23 +571,25 @@ rate_log="$5"
 trim="${6:-true}"
 scrape="${7:-false}"
 
-next_rate_log() {
+next_rate_log_name() {
   local rate_log="$1"
   
   # ddrescue overwrites the rate log for any run that makes progress,
   # so give each run is own log file, named xxx-0...xxx-N
   # If ddrescue is "Finished" no rate log is output from subsequent runs. 
-
+  
   local last_log
   local c
   # Get name of latest rate log; squelch if none.
   last_log="$(ls -1 -t  ${rate_log}-* | head -1)" 2> /dev/null
   if [ "$last_log" == "" ]; then
-    rate_log="$rate_log-0"
+    # XXX If more than 1000 rate logs the naming gets janky but it
+    # will still work.
+    rate_log="$rate_log-000"
   else
-    # xxx-0 -> c=0+1 --> xxx-1
+    # xxx-000 -> c=0+1 --> xxx-001
     let c=${last_log##*-}; let c++
-    echo "$rate_log-$c"
+    $(printf ${rate_log}"%03d" $c)
   fi
 }
 
@@ -910,7 +913,7 @@ list_partitions() {
     macOS)
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't output "/dev/"
-      echo "INCLUDE ESP: $include_efi" 1>&2
+      echo "PARTITION LIST INCLUDES ESP: $include_efi" 1>&2
 #      echo "list_partitions: $device" 1>&2
 
       # Parse out container disks (physical stores) and
@@ -967,7 +970,7 @@ list_partitions() {
       fi
 
       if [ "$p" == "" -a "$v" == "" ]; then
-        echo "list_partitions: device has no eligible partitions" 1>&2
+        echo "list_partitions: $device has no eligible partitions" 1>&2
       else
         echo ${p[@]} ${v[@]}
       fi
@@ -1144,9 +1147,9 @@ fsck_device() {
       local p
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
-#        echo -n "$part "
+        echo "fsck_device: $part"
         fs_type=$(get_fs_type "$part")
-        echo $fs_type
+        echo "fsck_device $fs_type"
         case $fs_type in
           hfs)
             if ! $find_files; then
@@ -1565,8 +1568,8 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   Slow_Blklist="$Label.slow-blklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log" # Incremeted if exists
-  Error_Files_Report="$Label.error-files-report"
-  Slow_Files_Report="$Label.slow-files-report"
+  Error_Files_Report="$Label.ERROR-FILES-REPORT"
+  Slow_Files_Report="$Label.SLOW-FILES-REPORT"
 
   if ! cd "$Label" > /dev/null 2>&1; then
     echo "No metadata found ($Label)"; exit 1;
