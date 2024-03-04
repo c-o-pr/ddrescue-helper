@@ -161,6 +161,20 @@ escalate() {
   fi
 }
 
+absolute_path() {
+  # Run in a subshell to prevent hosing the current working dir.
+  # XXX This breaks if current user cannot cd into a path element.
+  (
+    if [ -z "$1" ]; then return 1; fi
+    if ! cd "$(dirname "$1")"; then return 1; fi
+    case $(basename $1) in
+        ..) echo "$(dirname $(pwd))";;
+        .)  echo "$(pwd)";;
+        *)  echo "$(pwd)/$(basename $1)";;
+    esac
+  )
+}
+
 ##########################
 # FUNCTIONS SUPPORTING ZAP
 ##########################
@@ -339,9 +353,10 @@ sanity_check_blklist() {
   local device="$2"
 
   # XXX NOT YET USED
+  # Populate with checks for metadata areas that could be catastrophic
+  # to overwrite, like the partition table, superblock, etc.
   # At least check for very low and very high numbered blocks
   # relative to the device range.
-
   case $(get_device_type "$device") in
     file)
       return 0
@@ -376,27 +391,50 @@ ddrescue_map_bytes_to_blocks() {
 
   # Convert hex map data for byte addresses and extents
   # into decimal blocks.
-  # Input:
+  # Input (512):
   #   Addr   Len
   #   0x800  0x200  extraneous
   # Output:
   #   4      1
-  #
   # 0 or 0 are skipped.
   #
   local addr
   local len
   while IFS=" " read addr len x; do
-
     addr=$(( addr / blksize ))
     len=$(( len / blksize ))
-
+    # Edge case
     if  (( addr == 0 || len == 0 )); then continue; fi
-
     # decimal
     echo $addr $len
-
   done
+}
+
+parse_ddrescue_map_for_fsck() {
+  local map_file="$1"
+  local fsck_blklist="$2"
+
+  # Pull a list of error extents from the map
+  # convert them from byte to block addresses
+  # and emit a list of corresponding blocks.
+  #
+  # The map file is a list of byte addresses.
+  # EXTS just for debugging the calculation.
+  local blk
+  local cnt
+  grep -F -v '^#' "$map_file" | \
+  grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
+  grep -e - -e / -e \* | \
+  ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.EXTS" | \
+  sort -n | \
+  while IFS=" " read blk cnt; do
+    let blk=$blk-$partition_offset
+    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
+       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
+    for (( i = 0; i < cnt; i++ )); do
+      echo $(( blk + i ))
+    done
+  done 
 }
 
 create_ddrescue_error_blklist() {
@@ -405,55 +443,29 @@ create_ddrescue_error_blklist() {
   local fsck_blklist="$3"
   local blksize="${4:-512}"
 
-  # The map file is a list of byte addresses.
-
   # Translate a map file into a list of blocks that can be
   # used with fsck -B to list files.
-
+  #
   # Check if map file is a drive-relative or partition relative.
   # If drive relative, compute the partition offset and subtract
   # it from the drive block adddresses, as fsck is partition-relative
   # addresssing.
-
-  local blk
-  local cnt
-  local partition_offset
-  local map_device
-
+  #
   # fsck_hfs expects block addresses to be drive relative
   # fsck is relative to partition, so if <device> is a drive
   # then compute offset.
   #
-  # At this point we know <device> is a partition.
+  # At this point we know <device> is a partition not a drive.
+  local partition_offset
+  local map_device
   let partition_offset=0
   map_device=$(get_device_from_ddrescue_map "$map_file")
   if [ "$device" != "$map_device" ]; then
     # Assume the map is for a drive, so compute offset.
-    partition_offset=$( diskutil info "$device" | grep "Partition Offset" | \
-      sed -E 's/^.*\(([0-9]*).*$/\1/' )
-    echo "PARTITION OFFSET: $partition_offset"
-    if [ "$partition_offset" == "" ] || [ "$partition_offset" -eq 0 ]; then
-      echo "Something went wrong calculating partition offset"
-      return 1
-    fi
+    partition_offset=$(get_partition_offset "$device")
   fi
-  
   echo "ERROR BLOCKLIST: $fsck_blklist"
-
-  cat "$map_file" | \
-    grep -v '^#' | \
-    grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
-    grep -e - -e / -e \* | \
-    ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.TMP" | \
-    sort -n | \
-    while IFS=" " read blk cnt; do
-      let blk=$blk-$partition_offset
-      if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-         [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
-      for (( i = 0; i < cnt; i++ )); do
-        echo $(( blk + i ))
-      done
-    done >| "$fsck_blklist"
+  parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blklist" >| "$fsck_blklist"
 }
 
 create_smartctl_blklist() {
@@ -467,6 +479,51 @@ create_smartctl_blklist() {
     uniq | sort -n > "$smart_blklist"
 }
 
+parse_rate_log_for_fsck() {
+  local rate_log="$1"
+  local slow_blklist="$2" # Output file name
+  local slow_limit="$3" # Regions slower than this are selected
+
+  local n
+  local addr
+  local rate
+  local ave_rate
+  local bad_areas
+  local bad_size
+  local interval
+  local blk
+  local cnt
+  echo -n "" >| "$slow_blklist"
+  grep "^ *[0-9]" "${rate_log}"-* | \
+  while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
+    # Log entires are issued once per second Compute a sparse list of blocks
+    # based on the rate for that second to cover the region with 10 samples at
+    # evenly spaced intervals. Advanced Format drives are fundamentally 4096
+    # byte formats, so place samples on mod 4096 byte intervals
+    # Interger div rounds down.
+    # 
+    if (( rate < "$slow_limit" )); then
+      interval=$(( rate / 50 / 4096 ))
+      for (( i=0; i<=interval; i++ )); do
+        echo $(( addr + ( i * interval * 4096 ) )) 0x200
+      done
+    fi
+  done | \
+  # The compendium of logs may duplicate slow regions so filter dups out
+  # EXTS just for debugging the calculation
+  uniq | \
+  ddrescue_map_bytes_to_blocks | tee "$slow_blklist.EXTS" | \
+  sort -n | \
+  while IFS=" " read blk cnt; do
+    let blk=$blk-$partition_offset
+    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
+       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
+    for (( i = 0; i < cnt; i++ )); do
+      echo $(( blk + i ))
+    done
+  done
+}
+
 create_slow_blklist() {
   local device="$1"
   local map_file="$2"
@@ -478,15 +535,6 @@ create_slow_blklist() {
   # Create a list of block addresses for rate log entires with eads slower
   # rate_limit in bytes per second
   local partition_offset
-  local n
-  local addr
-  local rate
-  local ave_rate
-  local bad_areas
-  local bad_size
-  local interval
-  local blk
-  local cnt
 
   # fsck_hfs expects block addresses to be drive relative
   # fsck is relative to partition, so if <device> is a drive
@@ -506,37 +554,10 @@ create_slow_blklist() {
     fi
   fi
 
-#  echo "$slow_blklist"  
-  echo -n "" >| "$slow_blklist"
-#  echo "# Slower than $slow_limit bytes per sec" >| "$slow_blklist"
-  cat "$rate_log-"* | \
-    grep "^ *[0-9]" | \
-    while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
-      # Log entires are issued once per second Compute a sparse list of blocks
-      # based on the rate for that second to cover the region with 10 samples at
-      # evenly spaced intervals. Advanced Format drives are fundamentally 4096
-      # byte formats, so place samples on mod 4096 byte intervals
-      # Interger div rounds down.
-      # 
-      if (( rate < "$slow_limit" )); then
-        interval=$(( rate / 50 / 4096 ))
-        for (( i=0; i<=interval; i++ )); do
-          echo $(( addr + ( i * interval * 4096 ) )) 0x200
-        done
-      fi
-    done | \
-    # The compendium of logs may duplicate slow regions so filter dups out
-    uniq | \
-    ddrescue_map_bytes_to_blocks | tee "$slow_blklist.TMP" | \
-    sort -n | \
-    while IFS=" " read blk cnt; do
-      let blk=$blk-$partition_offset
-      if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-         [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
-      for (( i = 0; i < cnt; i++ )); do
-        echo $(( blk + i ))
-      done
-    done >> "$slow_blklist"
+  echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_blklist"
+  parse_rate_log_for_fsck "$rate_log" "$slow_blklist" "$slow_limit" >> \ 
+    "$slow_blklist"
+
 }
 
 ################################
@@ -581,7 +602,7 @@ next_rate_log_name() {
   local last_log
   local c
   let c=0
-  # Get name of latest rate log; squelch if none.
+  # Get name of latest rate log; squelch error if none.
   last_log="$(ls -1 -t  ${rate_log}-* | head -1)" 2> /dev/null
   if [ "$last_log" == "" ]; then
     # XXX If more than 1000 rate logs the naming gets janky but it
@@ -809,6 +830,32 @@ is_device() {
   esac
 }
 
+get_partition_offset() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      local offset
+      offset=$( diskutil info "$device" | grep "Partition Offset" | \
+                sed -E 's/^.*\(([0-9]*).*$/\1/' )
+      echo "PARTITION OFFSET: $offset" >&2
+      if [ "$offset" == "" ] || [ "$offset" -eq 0 ]; then
+        echo "Something went wrong calculating partition offset" >&2
+        echo "0"
+        return 1
+      fi
+      echo "$offset"
+      return 0
+      ;;
+    Linux)
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 device_is_boot_drive() {
   local device="$1"
   local boot_drive
@@ -923,8 +970,8 @@ list_partitions() {
       # Multiple containers are allowed.
       # Containers cannot be nested.
 
-      echo "PARTITION LIST INCLUDES ESP: $include_efi" 1>&2
-#      echo "list_partitions: $device" 1>&2
+      echo "PARTITION LIST INCLUDES ESP: $include_efi" >&2
+#      echo "list_partitions: $device" >&2
       local p=""
       local c
       local v
@@ -932,7 +979,7 @@ list_partitions() {
       # The device is either a drive or a specific partition
       if [ "$device" == "$(strip_partition_id "$device")" ]; then
 
-        echo "$device is a whole drive" 1>&2
+        echo "list_partitions: $device, device is entire drive" >&2
         # The EFI service parition is optionally included in the list
         # It is never auto-mounted by default
         # grep -v means invert match
@@ -954,12 +1001,12 @@ list_partitions() {
 
       else
       
-        echo "$device is a partition" 1>&2
+        echo "list_partitions: $device, device is a partition" >&2
         # Get the one conmtainer, if any
         p=( $(diskutil info "$device" | \
           grep "APFS Container:" | \
           sed -E 's/^.+(disk[0-9]+)$/\1/') )
-#        echo "list_partitions: p=${p[@]}" 1>&2
+#        echo "list_partitions: p=${p[@]}" >&2
 
         # No container, just a basic partition
         if [ "$p" == "" ]; then
@@ -972,14 +1019,14 @@ list_partitions() {
           c=( $(diskutil list "$p" | \
             grep "Container disk" | \
             sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
-#          echo "list_partitions: c=${c[@]}" 1>&2
+#          echo "list_partitions: c=${c[@]}" >&2
           # continue on to process the container
         fi
 
       fi
 
-#      echo "list_partitions: p=${p[@]}" 1>&2
-#      echo "list_partitions: c=${c[@]}" 1>&2
+#      echo "list_partitions: p=${p[@]}" >&2
+#      echo "list_partitions: c=${c[@]}" >&2
 
       # For all containers, process their contents as volumes
       v=""      
@@ -990,11 +1037,11 @@ list_partitions() {
                   grep '^ *[1-9][0-9]*:' | \
                   sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         done
-#        echo "list_partitions: v=${v[@]}" 1>&2
+#        echo "list_partitions: v=${v[@]}" >&2
       fi
 
       if [ "$p" == "" -a "$v" == "" ]; then
-        echo "list_partitions: $device has no eligible partitions" 1>&2
+        echo "list_partitions: $device has no eligible partitions" >&2
       else
         echo ${p[@]} ${v[@]}
       fi
@@ -1034,7 +1081,7 @@ unmount_device() {
       local r
       partitions=( $(list_partitions "$device") )
 #      echo unmount_device 1: "$device" "$(strip_partition_id "$device")"
-      echo "unmount_device: unmouonting ${partitions[@]}"
+      echo "unmount_device: unmounting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
@@ -1043,23 +1090,28 @@ unmount_device() {
         fs_type=$(get_fs_type "$part")
         if ! grep -q "^UUID=$volume_uuid" /etc/fstab; then
           echo "unmount_device: adding $volume_uuid $volume_name to /etc/fstab"
+
           # Juju with vifs to edit /etc/fstab
-          # G (got to end)
-          # A (append at end of line)
-          # :wq (write & quit
-          EDITOR=vi
-          let r=0
+          #
           # fstab entires must list the correct volume type or
           # they won't be honored by the system.
           #
+          # G (got to end)
+          # A (append at end of line)
+          # :wq (write & quit
           # THERE'S A NEEDED <ESC> CHARACTER EMBEDDED BEFORE :wq
+          #
+          # XXX Convert to ex(1)
+          EDITOR=vi
+          let r=0
           sudo vifs <<EOF1 > /dev/null 2>&1
 GA
-UUID=$volume_uuid none $fs_type rw,noauto # $volume_name $part:wq
+UUID=$volume_uuid none $fs_type rw,noauto # "$volume_name" $part:wq
 EOF1
-          let r+=$?
-          if [ $r -ne 0 ]; then echo "unmount_device: *** vifs failed"; fi
-          let result+=$r
+          if [ $? -ne 0 ]; then
+            echo "unmount_device: *** vifs failed"
+            return 1
+          fi
         fi
         if is_mounted "$part"; then
           sudo diskutil umount "$part"
@@ -1100,7 +1152,7 @@ mount_device() {
 #      echo "$device" "$(strip_partition_id "$device")"
       partitions=( $(list_partitions "$device") )
 #      echo ${partitions[@]}
-      echo "mount_device: mouonting ${partitions[@]}"
+      echo "mount_device: mounting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
@@ -1118,14 +1170,14 @@ mount_device() {
 /^UUID=$volume_uuid
 dd:wq
 EOF2
+#/^UUID=$volume_uuid.*${partitions[$p]}
+
           let r+=$?
           if [ $r -ne 0 ]; then echo "mount_device: *** vifs failed"; fi
           let result+=$r
         fi
-        if ! is_mounted "$part"; then
-          sudo diskutil mount "$part"
-          let result+=$?
-        fi
+        sudo diskutil mount "$part"
+        let result+=$?
       done
       echo "/etc/fstab:"
       cat /etc/fstab; echo
@@ -1173,15 +1225,14 @@ fsck_device() {
       local p
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
-        echo "fsck_device: $part"
         fs_type=$(get_fs_type "$part")
-        echo "fsck_device $fs_type"
+        echo "fsck_device: $part" "$fs_type"
         case $fs_type in
           hfs)
             if ! $find_files; then
               sudo fsck_hfs -f -y "$part"
             else
-              # On macOS -l "lock" must be used when mouonted write
+              # On macOS -l "lock" must be used when mounted write
 #              cat $blklist
               sudo fsck_hfs -n -l -B "$blklist" "$device"
             fi
@@ -1243,8 +1294,7 @@ Opt_Scrape=false
 
 while getopts ":cfhmpsuzXZ" Opt; do
   case ${Opt} in
-    c)
-      # Copy and build block map
+    c) # Copy and build block map and rate-log
       Do_Copy=true
       ;;
     f)
@@ -1443,21 +1493,49 @@ if $Do_Copy; then
 
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
-  Map_File="$Label.map"
+  Map_File=""
   Error_Fsck_Blklist="$Label.fsck-blklist"
   Zap_Blklist="$Label.zap-blklist"
   Smart_Blklist="$Label.smart-blklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log"
   Files_Log="$Label.files-log"
+  Metadata_Path=""
+  
   continuing=false
 
-  if [ "$Copy_Source" == "$Copy_Dest" ]; then
-    echo "<source> and <destination> must differ"
+  # Verify paths for 
+  let res=0
+  if ! absolute_path "$Label" > /dev/null; then
+    echo "Invalid label path $Label"
+    let res=+1
+  else
+    Metadata_Path="$(absolute_path "$Label")"
+  fi
+  if ! absolute_path "$Copy_Source" > /dev/null; then
+    echo "Invalid source path $Copy_Source"
+    let res=+1
+  else
+    Copy_Source="$(absolute_path "$Copy_Source")"
+  fi
+  if ! absolute_path "$Copy_Dest" > /dev/null; then
+    echo "Invalid destinationpath $Copy_Dest"
+    let res=+1
+  else
+    Copy_Dest="$(absolute_path "$Copy_Dest")"
+  fi
+  echo Metadata path: "$Metadata_Path"
+  echo Source path: "$Copy_Source"
+  echo Dest path: "$Copy_Dest"
+  if [ $res -gt 0 ]; then exit 1; fi
+  Map_File="$Metadata_Path/$Label.map"
+
+  if [ "$Copy_Source" == "$Copy_Dest" ] || \
+     [ "$Copy_Source" == "$Metadata_Path" ] || \
+     [ "$Copy_Dest" == "$Metadata_Path" ]; then
+    echo "<label>, <source> and <destination> paths must differ"
     exit 1
   fi
-  # Check existing mapfile to see if it lists <sourcce> and <destination>.
-  #
 
   if ! mkdir -p "$Label"; then
     echo "Can't create a data dir for \"$Label\""
@@ -1485,8 +1563,13 @@ if $Do_Copy; then
       exit 1
     fi
   else
+    # Stupid side effect of is_device
     if [ "$?" == "2" ]; then
       echo "$Copy_Source: device not found"
+      exit 1
+    fi
+    if [ -d "$Copy_Source" ]; then
+      echo "Copy source cannot be a directory: $Copy_Source"
       exit 1
     fi
     if ! resource_exists "$Copy_Source"; then
@@ -1522,6 +1605,10 @@ if $Do_Copy; then
         fi
         # Contimue
       fi
+      if [ -d "$Copy_Dest" ]; then
+        echo "Copy destination cannot be a directory: $Copy_Dest"
+        exit 1
+      fi
       echo "Copy destination is a file: $Copy_Dest"
     fi
   fi
@@ -1531,7 +1618,11 @@ if $Do_Copy; then
       echo "Unmount failed $Copy_Source"
       exit 1
     fi
+  elif [ -d "$Copy_Source" ]; then
+    echo "Copy source cannot be a directory"
+    exit 1
   fi
+
   if is_device "$Copy_Dest"; then
     if ! unmount_device "$Copy_Dest"; then
       echo "Unmount failed $Copy_Dest"
@@ -1551,7 +1642,7 @@ if $Do_Copy; then
     fi
   fi
 
-  if ! copy "$Copy_Source" "$Copy_Dest" "$Map_File" \
+  if ! echo copy "$Copy_Source" "$Copy_Dest" "$Map_File" \
             "$Event_Log" "$Rate_Log" "$Opt_Trim" "$Opt_Scrape"; then
     exit 1
   fi

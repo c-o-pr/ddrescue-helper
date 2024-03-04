@@ -96,10 +96,10 @@ Unmount/mount includes updating /etc/fstab (vifs on Mac) to prevent auto-mount. 
 
 `ddrescue_helper.sh -c [-N] <label> <file> <file>`
 
-- Scan a drive or partition generating the block.
+- Scan a drive or partition creating error map and rate log.
 - Copy a drive or partition to another device.
 - Image a drive or partition to a file.
-- Copy a file to another file.
+- Copy a file.
 
 Errors are tolerated and as much data as possible is copied.
 
@@ -119,10 +119,13 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Usability**
 
+- [ ] ADD Check for <file> to <file> if destination is directory and reuse
+file name.
 - [ ] ADD auto unmount of destination drive and help with removal of stale fstab entires for the destination after copy is complete.
 - [ ] ADD /dev/ specific fstab entries to prevent automount; including adding and removal without a corresponding drive present.
-- [ ] ADD help for changing volume LABELs and partition/volume UUIDs.
-- [ ] ADD 
+- [ ] ADD help for changing volume LABELs and partition/volume UUIDs
+/System/Library/Filesystems/TYPE.fs/Contents/Resources/TYPE.util -s rdisk21s10
+No "/dev", -s to set new random UUID
 - [ ] ADD Only auto unmount for copy not scan ?? maybe not
 - [ ] ADD Save the ddrecue work summaries for each run so that progress can be re-examined.
 - [ ] ADD Input a list of files to copy (source).
@@ -139,6 +142,7 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 - [ ] ADD prettify the output of -Z and save it in a log
 - [ ] ADD a summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
+- [x] XXX indentical source / dest check needs to cosnider different paths to same resource
 - [x] XXX -s Slow reads block spread for best coverage.
 - [x] XXX -p -s Adjust partition offset based on device specified
 - [x] ADD rate log reporting for slow areas and related files
@@ -146,6 +150,7 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Documentation**
 
+- [ ] XXX After cloning a drive or partition, the duplicates are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be reenumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID. 
 - [ ] XXX Explain the importance of unmount.
 - [ ] ADD Explanation of the ESP
 - [ ] ADD basics of ddrescue, and device specification, inc. hazards
@@ -155,6 +160,8 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Robustness**
 
+- [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the mapfile due to ambiguous whitespace
+- [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+. CCC used to offer a helper; now it's a UI option.
 - [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a baad volume worse before copying.
 - [ ] ADD zap blocklist sanity check for drive/part metadata regions
 - [ ] ADD -p -z checks for unmanagebly large numbers of problem blocks in the map
