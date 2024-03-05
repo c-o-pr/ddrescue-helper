@@ -27,17 +27,17 @@ GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
 # USAGE OVERVIEW
 
-Dealing with device errors is a drive, filesystem, and data specific chore, involving a range of factors:
+Dealing with media errors is a drive, filesystem, and file data specific task, involving a range of factors:
 
-a) Knowing what files are affected by read errors.
+A) Knowing what files are affected by read errors.
 
-b) Recovering as much data as possible when no backup exists.
+B) Recovering as much data as possible when no backup exists.
 
-c) Preventing re-use of bad drive regions.
+C) Preventing re-use of bad drive regions.
 
-d) Triggering a drive to re-allocate bad blocks.
+D) Triggering a drive to re-allocate bad blocks.
 
-e) Checking and repairing filesystem structure to recover from corruption.
+E) Checking and repairing filesystem structure to recover from corruption.
 
 `ddrescue-helper.sh` assists as follows:
 
@@ -64,9 +64,7 @@ e) Checking and repairing filesystem structure to recover from corruption.
 
 # WARNINGS
 > [!CAUTION]
-> THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL DATA ON A DRIVE DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
-> 
-> THERE ARE NO SANITY CHECKS FOR ZAP. USE WITH GREAT CAUTION.
+> THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL ACCESS DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
 >
 > __USE AT YOUR OWN RISK__
 
@@ -78,16 +76,19 @@ THE FRUGAL OR BEREFT MAY HAVE NEED TO WORK WITH JANKY DEVICES AT HAND.
 
 MAKING A TERRIBLE MISTAKE IS LIKELY, BUT THE SKILLED MAY BE REWARDED
 
+> [!WARNING] 
+> THERE ARE NO SANITY CHECKS FOR ZAP. USE WITH GREAT CAUTION.
+
 > [!IMPORTANT]
 > IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
 >
 > My experience is that large (TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
 >
-> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This allows a troublesome drive to continue to be used.
+> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This may allow contimnued use of a drive with minor errors.
 
 # COMMAND OPTIONS
 
-There are THREE modes of operation:
+There are THREE MODES of `ddrescue-helper.sh` operation:
 
 #### 1. UNMOUNT, MOUNT, AND FSCK A DRIVE OR PARTITION.
 
@@ -97,9 +98,9 @@ There are THREE modes of operation:
 
 `-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate after making a clone or zapping.
 
-#### 2. SCAN, COPY USING DDRESCUE.
+#### 2. SCAN, COPY
 
-Generates a read map of blocks listing errors and a rate log which indicates device regions that experienced an IO slowdown. The map and rate log are stored in a folder named <label>
+Runs `ddrescue` to scan a device or recover data, generating a map of read errors and a rate log which records device regions that experienced read slowdown. The map and rate log are stored in a folder named <label>
 
 `ddrescue_helper.sh -c [-X] <label> <deivce> /dev/null`
 
@@ -109,7 +110,7 @@ Generates a read map of blocks listing errors and a rate log which indicates dev
 
 `ddrescue_helper.sh -c <label> <file> <file>`
 
-- Scan a drive or partition creating error map and rate log.
+- Scan a drive or partition to create error map and rate log.
 
 - Copy a drive or partition to another device.
 
