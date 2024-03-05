@@ -25,7 +25,7 @@ A side effect of running ddrescue is the creation of two kinds of metadata for t
 
 GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
-# DDRESCUE-HELPER BACKGROUND AND PURPOSE
+# BACKGROUND AND PURPOSE
 
 The idea for this helper came about from dealing with media errors occurring during local backups of spinning drives. As spinning drives fill up and age they become prone to bad regions.
 
@@ -68,8 +68,12 @@ e) Checking and repairing filesystem structure to recover from corruption.
 - Keeps ddrescue metadata in a named folder and checks that existing domain map agrees with the specific source and destination.
 - Persistently unmounts volumes on a drive to ensure that drive or partition isn't changed by the OS while a rescue copy is running.
 - Performs drive-to-drive, drive-to-image (file), or file-to-file copying and scanning: 
-  - Scanning a drive (copying to /dev/null) creates the bad block "map" based on read errors and also generates a read-rate log for slow areas.
-  - In the case of specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
+
+> [!NOTE]
+> Scanning a drive (copying to /dev/null) creates the bad block "map" based on read errors and also generates a read-rate log for slow areas.
+>
+> In the case of specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
+
 - Copies and scans can be stopped with ^C and continued by rerunning the same command. Recovery is also restartable after drive disconnection or system crash.
 - For macOS HFS+ volumes, a report of affected files can be generated from the ddrescue metadata for both bad-blocks and slow reads.
 - The bad blocks can be "zapped" to trigger the drive to re-allocate them. This can regain access a volume that's inaccessible due to read errors in filesystem metadata.
@@ -82,8 +86,6 @@ My experience is that large (TB+) commodities spinning hard drives have unreliab
 
 By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This allows a troublesome drive to continue to be used.
 
-# <span style="color:red">WARNING!</span>
-
 > [!CAUTION]
 > THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL DATA ON A DRIVE DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
 > 
@@ -94,7 +96,7 @@ By running a scan over an entire drive, such defects can be side-stepped by sett
 > THE WISE DATA HOARDER WILL HAVE GOOD BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
 >
 > THE FRUGAL OR BEREFT MAY HAVE NEED TO WORK WITH JANKY DEVICES AT HAND.
-
+>
 > MAKING A TERRIBLE MISTAKE IS LIKELY, BUT THE SKILLED MAY BE REWARDED
 >
 > __—USE AT YOUR OWN RISK—__
