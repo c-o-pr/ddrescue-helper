@@ -109,10 +109,10 @@ $(basename "$0") Usage:
      obvious caveat of missing infomration.
 
   REQUIRES
-  Bash V3+
-  GNU ddrescue: [ macports | brew ] install ddrescue
-  fsck_hfs(8) - mac builtin
-  diskutil(8) - mac builtin
+    Bash V3+
+    GNU ddrescue: [ macports | brew ] install ddrescue
+    fsck_hfs(8) - mac builtin
+    diskutil(8) - mac builtin
 
   SEE
     GNU ddrescue manual
@@ -208,7 +208,7 @@ zap_sequence() {
 
   let max=3
   let c=1
-  echo -n "Processing $target, $block, $count "
+  printf "zap_sequence: Processing $target 0x%X %d:\n" "$block" "$count"
   while [ "$c" -le "$count" ]; do
     echo -n "$block read "
     let t=$( date +%s )+1
@@ -243,37 +243,47 @@ zap_sequence() {
 }
 
 zap_from_mapfile() {
-  local target="$1"
+  local device="$1"
   local map_file="$2"
   local zap_blklist="$3" # side-effect
-
+  local preview="${4:-true}"
+  
   echo "$zap_blklist"
 
-  cat "$map_file" | \
-    grep -v \# | \
-    grep -e - -e / -e \* | \
-    ddrescue_map_bytes_to_blocks 512 \
-    sort -n | \
-    >| "$zap_blklist"
+  grep -v "^#" "$map_file" | \
+  grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
+  grep -e - -e / -e '*' | \
+  ddrescue_map_bytes_to_blocks 512 \
+  sort -n >| "$zap_blklist"
 
   if [ ! -s "$zap_blklist" ]; then
-    echo "Missing or empty bad-block list"
+    echo "zap_from_mapfile: Missing or empty bad-block list"
     return 1
   fi
   if grep '[^0-9 ]' "$zap_blklist"; then
-    echo "Bad-block list should be a list of numbers"
+    echo "zap_from_mapfile: Bad-block list should be a list of numbers"
     return 1
   fi
 
-  cat "$zap_blklist" | while read blk cnt; do
+  local total_blks
+  let total_blks=0
+  if $preview; then
+    echo "zap_from_mapfile: PREVIEW"
+    echo "zap_from_mapfile: DEVICE BLOCK COUNT"
+  fi
+  cat "$zap_blklist" | ( while read blk cnt; do
     if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
        [ "$cnt" == "" ] || [ "$cnt" -gt 500 ]; then
-      echo "Bad block list: address is 0 or count > 500"
+      echo "zap_from_mapfile: Bad block list: address is 0 or count > 500"
       return 1
     fi
-    zap_sequence "$device" "$blk" "$cnt"
-  done
-
+    let total_blks+=$cnt
+    if $preview; then
+      printf "$device 0x%X 0x%04X (%d)\n" "$blk" "$cnt" "$cnt"
+    else
+      zap_sequence "$device" "$blk" "$cnt"
+    fi
+  done; if $preview; then echo "zap_from_mapfile: ZAP TOTAL = $total_blks"; fi )
   return 0
 }
 
@@ -401,7 +411,7 @@ ddrescue_map_bytes_to_blocks() {
   #
   local addr
   local len
-  while IFS=" " read addr len x; do
+  while read addr len x; do
     addr=$(( addr / blksize ))
     len=$(( len / blksize ))
     # Edge case
@@ -413,7 +423,7 @@ ddrescue_map_bytes_to_blocks() {
 
 parse_ddrescue_map_for_fsck() {
   local map_file="$1"
-  local fsck_blklist="$2"
+  local fsck_blklist="$2" # side-effect
 
   # Pull a list of error extents from the map
   # convert them from byte to block addresses
@@ -423,9 +433,9 @@ parse_ddrescue_map_for_fsck() {
   # EXTS just for debugging the calculation.
   local blk
   local cnt
-  grep -F -v '^#' "$map_file" | \
+  grep -v '^#' "$map_file" | \
   grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
-  grep -e - -e / -e \* | \
+  grep -e - -e / -e '*' | \
   ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.EXTS" | \
   sort -n | \
   while IFS=" " read blk cnt; do
@@ -441,7 +451,7 @@ parse_ddrescue_map_for_fsck() {
 create_ddrescue_error_blklist() {
   local device="$1"
   local map_file="$2"
-  local fsck_blklist="$3"
+  local fsck_blklist="$3" # side-effect
   local blksize="${4:-512}"
 
   # Translate a map file into a list of blocks that can be
@@ -702,13 +712,14 @@ resource_matches_map() {
   local map_file="$2"
 
   if [ -s "$map_file" ]; then
+    # Spaces arounf $device matter!
     if grep -q "# Mapfile. Created by GNU ddrescue" "$map_file"; then
        grep -q " $device " "$map_file"
     else
       return 1
     fi
   else
-#    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
+    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
     return 1
   fi
 }
@@ -1293,8 +1304,8 @@ Do_Copy=false
 Do_Error_Files_Report=false
 Do_Slow_Files_Report=false
 #
-Do_Summarize_Zap_Regions=false
 Do_Zap_Blocks=false
+Preview_Zap_Regions=false
 #
 Opt_Trim=true
 Opt_Scrape=false
@@ -1351,9 +1362,9 @@ while getopts ":cfhmpsuzXZ" Opt; do
       Do_Unmount=true
       ;;
     z)
-      echo "-z zap summarize not yet supported"
-      exit 1
-      Do_Summarize_Zap_Regions=true
+      # Only preview
+      Do_Zap_Blocks=true
+      Preview_Zap_Regions=true
       ;;
     Z)
       # Overwite blocks in the device one at a time using an existing map
@@ -1809,8 +1820,8 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
       error "zap: No block map ($Label). Create with -c"
       exit 1
     fi
-    if ! resource_matches_map "$Device" "$Map_File" &&
-       ! resource_matches_map "$(strip_partition_id "$Device")" "$Map_File";
+    # Drive or parition, the device and the map must agree.
+    if ! resource_matches_map "$Device" "$Map_File";
        then
       error -n "zap: Existing block map ($Label) but not for $Device"
       get_commandline_from_map "$Map_File"
@@ -1822,8 +1833,8 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
       exit 1
     fi
 
-    zap_from_mapfile "$Device" "$Map_File" "$Zap_Blklist"
-
+    zap_from_mapfile "$Device" "$Map_File" \
+                     "$Zap_Blklist" $Preview_Zap_Regions
   fi
 
 fi

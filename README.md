@@ -142,7 +142,6 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 **Usability**
 
 - [ ] Fix awareness of the EFI service parition
-- [ ] ADD -z print a summary of LBA extents affected by read errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
 - [ ] ADD -p -z checks for unmanageably large numbers of problem blocks in the map
 - [ ] ADD Force use of /dev/rdisk on macOS for speed.
 - [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
@@ -166,6 +165,7 @@ No "/dev", -s to set new random UUID
 - [ ] ADD prettify the output of -Z and save it in a log
 - [ ] ADD a summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
+- [x] ADD -z print a summary of LBA extents affected by read errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
 - [x] ADD Check for source file is newer than dest file
 - [x] ADD Check for <file> to <file> if destination is directory
 - [x] XXX identical source / dest check needs to consider different paths to same resource
