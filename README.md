@@ -25,7 +25,7 @@ A side effect of running ddrescue is the creation of two kinds of metadata for t
 
 GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
-# BACKGROUND AND PURPOSE
+# HELPER BACKGROUND AND PURPOSE
 
 The idea for this helper came about from dealing with media errors occurring during local backups of spinning drives. As spinning drives fill up and age they become prone to bad regions.
 
@@ -48,7 +48,7 @@ Finally, it so happens that my data drives are formatted HFS+. Along the way I c
 
 Here I found I all the pieces of a puzzle for how to cope with my cranky drives, so I put all these ideas together into this `ddescue-helper.sh` bash script.
 
-# DDRESCUE-HELPER.SH OVERVIEW
+# USAGE OVERVIEW
 
 Dealing with device errors is a drive, filesystem, and data specific chore, involving a range of factors:
 
@@ -67,41 +67,45 @@ e) Checking and repairing filesystem structure to recover from corruption.
 - Simplifies operating ddrescue by hiding standard options and performing simple consistency checks.
 - Keeps ddrescue metadata in a named folder and checks that existing domain map agrees with the specific source and destination.
 - Persistently unmounts volumes on a drive to ensure that drive or partition isn't changed by the OS while a rescue copy is running.
-- Performs drive-to-drive, drive-to-image (file), or file-to-file copying and scanning: 
+
+- Performs drive-to-drive, drive-to-file (image), or file-to-file copying and scanning.
 
 > [!NOTE]
 > Scanning a drive (copying to /dev/null) creates the bad block "map" based on read errors and also generates a read-rate log for slow areas.
 >
-> In the case of specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
+> In the case of working with specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
 
 - Copies and scans can be stopped with ^C and continued by rerunning the same command. Recovery is also restartable after drive disconnection or system crash.
+
 - For macOS HFS+ volumes, a report of affected files can be generated from the ddrescue metadata for both bad-blocks and slow reads.
 - The bad blocks can be "zapped" to trigger the drive to re-allocate them. This can regain access a volume that's inaccessible due to read errors in filesystem metadata.
 - Run fsck on a whole drive or a partition.
 - Re-mount a drive or partition and disable persistent automount prevention.
 
-# IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
-
-My experience is that large (TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
-
-By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This allows a troublesome drive to continue to be used.
-
+# WARNINGS
 > [!CAUTION]
 > THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL DATA ON A DRIVE DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
 > 
 > THERE ARE NO SANITY CHECKS FOR ZAP. USE WITH GREAT CAUTION.
-> 
-> THIS SCRIPT HAS BEEN CODED WITH CARE, BUT UNEXPECTED BEHAVIORS ARE POSSIBLE. SHELL SXCRIPTS ARE PESKY BECAUSE THEY RELY HEAVILY ON TEXT SUBSTITUTION.
->
-> THE WISE DATA HOARDER WILL HAVE GOOD BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
->
-> THE FRUGAL OR BEREFT MAY HAVE NEED TO WORK WITH JANKY DEVICES AT HAND.
->
-> MAKING A TERRIBLE MISTAKE IS LIKELY, BUT THE SKILLED MAY BE REWARDED
->
-> __—USE AT YOUR OWN RISK—__
 
-# USAGE OVERVIEW
+THIS SCRIPT HAS BEEN CODED WITH CARE, BUT UNEXPECTED BEHAVIORS ARE POSSIBLE. SHELL SXCRIPTS ARE PESKY BECAUSE THEY RELY HEAVILY ON TEXT SUBSTITUTION.
+
+THE WISE DATA HOARDER WILL HAVE GOOD BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
+
+THE FRUGAL OR BEREFT MAY HAVE NEED TO WORK WITH JANKY DEVICES AT HAND.
+
+MAKING A TERRIBLE MISTAKE IS LIKELY, BUT THE SKILLED MAY BE REWARDED
+
+__—USE AT YOUR OWN RISK—__
+
+> [!IMPORTANT]
+> IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
+>
+> My experience is that large (TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
+>
+> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This allows a troublesome drive to continue to be used.
+
+# COMMAND OPTIONS
 
 There are three modes of operation:
 
@@ -151,7 +155,8 @@ Use the block map generated by copy to
 
 `ddrescue_helper.sh -Z <label> <device>`
 
-WARNING DANGEROUS 
+> [!WARNING]
+> ZAP IS DANGEROUS!
 
 `-Z` Zap blocks in an attempt to trigger the drive to reallocate them. This is destructive to those blocks, but it can allow recovery of space from large media, and can enable fsck to repair a volume that was stuck at a read timeout.
 
