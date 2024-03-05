@@ -29,15 +29,15 @@ GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
 Dealing with media errors is a drive, filesystem, and file data specific task, involving a range of factors:
 
-A) Knowing what files are affected by read errors.
+— Knowing what files are affected by read errors.
 
-B) Recovering as much data as possible when no backup exists.
+— Recovering as much data as possible when no backup exists.
 
-C) Preventing re-use of bad drive regions.
+— Preventing re-use of bad drive regions.
 
-D) Triggering a drive to re-allocate bad blocks.
+— Triggering a drive to re-allocate bad blocks.
 
-E) Checking and repairing filesystem structure to recover from corruption.
+— Checking and repairing filesystem structure to recover from corruption.
 
 `ddrescue-helper.sh` assists as follows:
 
@@ -70,14 +70,12 @@ E) Checking and repairing filesystem structure to recover from corruption.
 
 This script has been coded with care, but unexpected behaviors are possible. Shell sxcripts are pesky because they rely heavily on text substitution.
 
-THE WISE DATA HOARDER WILL HAVE GOOD BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
+THE WISE DATA HOARDER WILL HAVE BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
 
-THE FRUGAL OR BEREFT MAY HAVE NEED TO WORK WITH JANKY DEVICES AT HAND.
+The frugal or bereft may want to work with janky devices at hand.
 
-MAKING A TERRIBLE MISTAKE IS LIKELY, BUT THE SKILLED MAY BE REWARDED
+Making a terrible mistake is possible, but the skilled may be rewarded
 
-> [!WARNING] 
-> THERE ARE NO SANITY CHECKS FOR ZAP. USE WITH GREAT CAUTION.
 
 > [!IMPORTANT]
 > IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
@@ -138,8 +136,8 @@ These funtions utilize the `ddrescue` block map data resulting from copy / scan.
 
 `-Z` Zap blocks in an attempt to trigger the drive to reallocate them. This is destructive to those blocks, but it can allow recovery of space from large media, and can enable fsck to repair a volume that was stuck at a read timeout.
 
-> [!WARNING]
-> ZAP IS DANGEROUS!
+> [!WARNING] 
+> THERE ARE NO SANITY CHECKS FOR ZAP — USE WITH GREAT CAUTION.
 
 # BACKGROUND ON CREATIONS OF THIS TOOL
 
