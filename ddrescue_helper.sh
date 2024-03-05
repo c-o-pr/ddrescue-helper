@@ -18,11 +18,14 @@ $(basename "$0") Usage:
     Use /dev/null for <destination> to scan <source> producing
     a map and rate log.
 
-  -p | -s | -Z <label> <device>
+  -p | -s | -z | -Z <label> <device>
     :: print affected files reports / zap-blocks
 
     -p [SAFE] report files affected by read errors in map data.
     -s [SAFE] report files affected by slow reads in rate log.
+
+    -z Zap preview. Print a list of block regions that will nbe zapped,
+       but don't zap them. Examine the list to sanity check before -Z.
     -Z [DANGEROUS] Overwrite drive blocks at error regions specified by map data
        to help trigger <device> to re-allocate underlying sectors.
 
@@ -51,36 +54,44 @@ $(basename "$0") Usage:
 
   -u Unmount <device> partition(s) and prevent auto-moounting.
      The GPT EFI partition is not included as it is not normally auto-mounted.
-
-  -m Undo autmount prevention and remount partition(s) on <device>.
+     If device is a drive, all its partitions are unmouonted including 
+     APFS containers.
+     
+  -m Undo autmount prevention and remount drive or partition on <device>.
 
   -f Fsck. Check and repair partitions (HFS+).
 
-  -c Copy <source> to <destination> using ddrescue to build a map of
-     unreadable (bad) blocks.
+  -c Copy <source> to <destination> using ddrescue to build metadata for
+     unreadable (bad) blocks (block map) and create a rate log.
 
      Metadata including the block map for the copy is placed in a subdir
      named <label> in the current working dir.
 
      <destination> can be /dev/null, in which case the effect is a "scan"
-     for read errors on <source> producing a block map which can be used
-     with -p and -Z.
+     for read errors on <source> to produce the block for use with
+     -p -s -z and -Z.
 
-     If existing block map data for <label> is present,
-     copying resumes until ddrescue determines the disposition
-     of all blocks in target (ddescue "finished").
+     If existing block map data for <label>, <source> and <destination>
+     is present, copying resumes until ddrescue determines the disposition
+     of all blocks in the source, subject to limits on scripting.
+     (ddescue "finished").
 
-     Existing block map data is checked to pertain to the specfied
-     <source> and <destinatio>.
+     Existing block map data ets a simple sanity-check that it pertains
+     to the specfied <source> and <destinatio>.
 
      Copy implies unmount (-u) <source> and <destination>.
      Mounting (-m) after copy must be performed explicitly.
 
-     The block map file created by -c can be used by -p and -Z.
+     The metadata created by any -c for drvies and partitions 
+     can be used by -p -s -z and -Z. When the source is a file, it may be
+     interesting to know which blocks are affected by these are logical blocks
+     within the file, not device blocks.
 
      By default -c when <destination> is /dev/null (scan) doesn't scrape
      to avoid waiting for additional reads in likely bad areas that aren't
      likely to change afftect files reporting. Enable scan scrape with -X.
+     
+     The boot drive cannot used (altoough maybe it should be allowed for scan).
 
   -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
 
