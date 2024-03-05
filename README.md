@@ -13,8 +13,9 @@ It can:
 
 By hiding details of the ddrescue command line, ensuring that source and destination volumes remain unmounted, and performaning simple consistency checks, it makes using ddrescue a bit easier.
 
-It targets bash v3.2+, which is old enough to avoid compabability issues.
- 
+> [!IMPORTANT]
+> The script was developed using bash v3.2, which should be compatible with older systems. But it was made on macOS Ventura and hasn't been tested on other macOS versions. If Apple has changed output formats of information from `diskutil` it may not work properly.
+
 ### ABOUT GNU DDRESCUE
 
 GNU ddrescue is a tool for copying storage devices (drives, partitions, or files) in a way that gracefully handles read errors and restarts, allowing as much data as possible to be recovered from the source.
@@ -145,22 +146,26 @@ The idea for this helper came about from dealing with media errors occurring dur
 
 I keep backups, and I prefer to replace a drive with any errors. But for reasons of being cheap, I've wanted to keep using drives affected by small number of bad blocks for as long as possible. One way to do this is to set aside files that cover bad spots. But I ran into a case where filesystem metadata was affected and a drive became unmountable.
 
-To recover from this, I started by looking at SMART and hdparm(1) on Linux to find and re-map bad blocks. I also became aware of the `badblocks(8)` utility. 
+To recover from this, I started by looking at SMART and `hdparm(8)` on Linux to find and re-map bad blocks. I also became aware of the `badblocks(8)` utility. 
 These tools are interesting, but due to vendor inconsistencies with SMART, and that many of my data drives are attached by USB, which prevents access to SMART capabilities, I couldn't easily build a helper based on them. SMART long tests take a long time to run and aren't supported by many common drives.
 
-My daily driver is a hackintosh and `hdparm(8)` and `badblocks(8)` are not available, even via 3rd-party ports.
+My daily driver is a hackintosh and `hdparm` and `badblocks` are not available, even via 3rd-party ports.
 
 [As an interesting aside, I discovered that when a USB drive is passed through to an Ubuntu VM via Parallels, `smartctl(8)` works as if it were locally attached by SATA.]
 
-There's no hdparm(8) for macOS, but I discovered that by careful use of dd(1), I can trigger a spinning drive to re-allocate a bad sector. Using this tactic allowed me to regain access to the unmountable drive I mentioned above, and `dd(1)` is widely available.
+While there's no `hdparm` for macOS, I discovered that by careful use of `dd`, I can trigger a spinning drive to re-allocate a bad sector. Using this tactic allowed me to regain access to the unmountable drive I mentioned above, and `dd` is a widely available utility.
 
-GNU `ddrescue(1)` is an indispensable tool for recovering failing drives. And compared to SMART, it's far simpler and more consistent to use to scan a whole or partition or drive with ddrescue. The ddrescue then parse ddrescue's error map into a bad block list. But it's just complicated enough to make it difficult to recall how to use it. And it's very important that when `ddrescue` is being used to recover data that the source and destination devices are not automounted so that they remain in a consistent state until the copy is complete, where the copy may be interrupted by a timeout, drive disconnection or a system crash. 
+GNU ddrescue is an indispensable tool for recovering data from failing drives. And compared to SMART, it's far simpler and more consistent to use it to scan a drive or partition, then parse the the map domain into a bad block list for use with `dd`. 
 
-Finally, it so happens that my data drives are formatted HFS+. Along the way I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to.
+Using `ddrescue` is just complicated enough to make it difficult to recallthe command syntax, so a helper seems natural.
 
-`ddrescue` can also generate a rate log, which like the bad block map, can be converted into a block list and fed to `fsck.hfs` to find files affected by drive regions with very slow reads.
+It's very important that when recovering data that the source and destination devices are not automounted so that they remain in a consistent state until the copy is complete. A copy may be interrupted by a timeout, drive disconnection or a system crash, or intentionally interrupted.
 
-Here I found I all the pieces of a puzzle for how to cope with my cranky drives, so I put all these ideas together into this `ddescue-helper.sh` bash script.
+It so happens that my data drives are formatted HFS+. While working with a problem drive, I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to.
+
+Finally,`ddrescue` can also generate a rate log, which like the bad block map, can be converted into a block list and fed to `fsck.hfs` to find files affected by drive regions with very slow reads.
+
+With this, all the pieces of the puzzle for how to cope with my cranky drives, came together, so I put all these ideas together into this `ddescue-helper.sh` script.
 
 # TODOs
 
