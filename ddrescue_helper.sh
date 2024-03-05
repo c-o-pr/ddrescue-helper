@@ -1,32 +1,29 @@
 #!/bin/bash
+#/bin/bash --version
 
 usage() {
   cat << USAGE
 $(basename "$0") Usage:
 
   WARNING! DESTRUCTIVE TO DATA!
-  
-  BEFORE USING REVIEW THE DOCUMENTATION FOR GNU ddrescue.
-  
+  BEFORE USING READ THE DOCUMENTATION FOR GNU ddrescue.
   STUDY THIS USAGE CAREFULLY BEFORE USING -Z
 
   -m | -u | -f <device>
-    -> unmount / mount / fsck
+    :: unmount / mount / fsck
 
   -c [ -X ] <label> <source> <destination>
-    -> copy
+    :: copy
 
-    <destination> = /dev/null to scan <source> producing a map.
+    Use /dev/null for <destination> to scan <source> producing
+    a map and rate log.
 
-  -p | -s | -z | -Z <label> <device>
-    -> print affected files reports / zap-blocks
+  -p | -s | -Z <label> <device>
+    :: print affected files reports / zap-blocks
 
-    -p report files affected by read errors in map data.
-    -s report files affected by slow reads in rate log.
-    -z print a summary of LBA extents affected by read errors
-       This is a sanity check for -Z. Large areas of errors
-       indicates a failed drive and zapping is impractible.
-    -Z Overwrite drive blocks at error regions specified by map data
+    -p [SAFE] report files affected by read errors in map data.
+    -s [SAFE] report files affected by slow reads in rate log.
+    -Z [DANGEROUS] Overwrite drive blocks at error regions specified by map data
        to help trigger <device> to re-allocate underlying sectors.
 
   <label> Name for a directory created to contain ddrescue map and log data.
@@ -34,10 +31,11 @@ $(basename "$0") Usage:
   <device> /dev entry for an block storage device.
     IMPORTANT: See description below.
 
-    On macOS, use the "r" form of the device special file to get full speed
-    direct drive access (e.g., /dev/rdisk2).
+    On macOS, use the "rdisk" form of the device special file to get
+    full speed access (e.g., /dev/rdisk17).
 
-    If <device> is a whole drive, all its volumes are affected.
+    If <device> is a whole drive, all its partitions are affected.
+    Except for -m and -u which ignore EFI service parition.
 
   <source> <destination> regular file or /dev block storage device.
 
@@ -84,11 +82,11 @@ $(basename "$0") Usage:
      to avoid waiting for additional reads in likely bad areas that aren't
      likely to change afftect files reporting. Enable scan scrape with -X.
 
-  -X ddrescue Scrape during scan.
+  -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
 
-  -Z Zap blocks blocks listed as error by an existing block map.
+  -Z Zap blocks listed as errors in an existing block map.
      Uses dd to write specific discrete blocks in an attempt
-     to make make the drive re-allocate them.
+     to make the drive re-allocate them.
 
      Map data from an unfinished copy can be used with -Z.
 
@@ -111,21 +109,20 @@ $(basename "$0") Usage:
      obvious caveat of missing infomration.
 
   REQUIRES
-  GNU ddrescue:
-    (macports | brew install ddrescue -- Linux: apt install gddrescue)
-  fsck_hfs (mac builtin)
-  fsck.hfs (Linux hfstools)
+  Bash V3+
+  GNU ddrescue: [ macports | brew ] install ddrescue
+  fsck_hfs(8) - mac builtin
+  diskutil(8) - mac builtin
 
-  SEE GNU ddrescue manual
+  SEE
+    GNU ddrescue manual
     https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html
 
-  SOURCE
+  SOURCE OF THIS SCRIPT
     https://github.com/c-o-pr/ddrescue-helper
 
 USAGE
 }
-
-# XXX See README.md
 
 cleanup() {
   return 0
@@ -144,6 +141,10 @@ trap _abort SIGINT SIGTERM
 #}
 #trap _suspend SIGTSTP
 
+error() {
+  echo "*** $1" >&2
+}
+
 get_OS() {
   if which diskutil > /dev/null; then
     echo "macOS"
@@ -153,7 +154,7 @@ get_OS() {
 }
 
 escalate() {
-# XXX not needed
+# XXX not used
   echo "Escalating privileges..."
   if ! sudo echo -n; then
     echo "sudo failed"
@@ -651,7 +652,7 @@ while ! $finished && [ "$tries" -lt "$max" ]; do
   ddrescue $opts  --log-rates="$(next_rate_log_name $rate_log)" \
     "$source" "$device" "$map_file"
   sleep 1
-  if grep -F "Finished" "$map_file"; then finished=true; fi
+  if grep -F "Finished" "$map_file" > /dev/null; then finished=true; fi
 done
 if ! $finished; then
   echo "*** COPY INCOMPLETE: aborted after $max tries"
@@ -662,7 +663,7 @@ EOF
   chmod 755 "$helper_script"
 }
 
-copy() {
+run_ddrescue() {
   local copy_source="$1"
   local copy_dest="$2"
   local map_file="$3"
@@ -674,7 +675,7 @@ copy() {
 
   local helper_script="./ddrescue.sh"
   make_ddrescue_helper "$helper_script"
-  echo "copy: running ddrescue in $(pwd)"
+  echo "run_ddrescue: $(pwd)"
   sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
        "$trim" "$scrape"
@@ -688,6 +689,12 @@ copy() {
 
 resource_exists() {
   [ -f "$1" ] || [ -b "$1" ] || [ -c "$1" ]
+}
+
+get_commandline_from_map() {
+  local map_file="$1"
+  if [ ! -s "$map_file" ]; then echo "XXX"; exit 1; fi
+  grep "# Command line: ddrescue" "$map_file"
 }
 
 resource_matches_map() {
@@ -806,7 +813,7 @@ is_device() {
 
   if [[ "$device" =~ ^/dev/null$ ]]; then return 1; fi
 
-  # device is specifies /dev so make sure it exists
+  # device specifies "/dev/" so make sure it exists
   if ! resource_exists "$device"; then
     return 2;
   fi
@@ -916,7 +923,7 @@ get_device_from_ddrescue_map() {
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
   if [ "$x" == "" ]; then
-    echo "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
+    error "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
     exit 1
   fi
   echo "$x"
@@ -1344,6 +1351,8 @@ while getopts ":cfhmpsuzXZ" Opt; do
       Do_Unmount=true
       ;;
     z)
+      echo "-z zap summarize not yet supported"
+      exit 1
       Do_Summarize_Zap_Regions=true
       ;;
     Z)
@@ -1352,7 +1361,7 @@ while getopts ":cfhmpsuzXZ" Opt; do
       ;;
     *)
       usage
-      echo "$(basename "$0"): Unknown option $1"
+      error "$(basename "$0"): Unknown option $1"
       exit 1
       ;;
   esac
@@ -1365,7 +1374,7 @@ if ! $Do_Mount && ! $Do_Unmount && ! $Do_Fsck && \
    ! $Do_Error_Files_Report && ! $Do_Slow_Files_Report && \
    ! $Do_Summarize_Zap_Regions && ! $Do_Zap_Blocks && \
    true; then
-  echo "Nothing to do (-h for usage)"
+  echo "$(basename "$0"): Nothing to do (-h for usage)"
   exit 0
 fi
 
@@ -1378,49 +1387,49 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
      false; then
-    echo "Incompatible options (1)"
+    error "Incompatible options (1)"
     exit 1
   fi
 
   if [ $# -ne 1 ]; then
-    echo "Missing or extra parameter (1)"
+    error "Missing or extra parameter (1)"
     exit 0
   fi
 
   Device="$1"
 
   if ! is_device "$Device" false; then
-    echo "No such device $Device"
+    error "No such device $Device"
     exit 1
   fi
 
   if $Do_Unmount; then
     if $Do_Mount; then
-      echo "Incompatible options (1c)"
+      error "unmount: Incompatible options (1c)"
       exit 1
     fi
-    echo "Umount and disable automount..."
+    echo "unmount: Disable automount..."
     if ! unmount_device "$Device"; then
-      echo "*** Unmount(s) failed"
+      error "unmount: Unmount(s) failed"
       exit 1
     fi
   fi
 
   if $Do_Mount; then
     if $Do_Unmount || $Do_Fsck; then
-      echo "Incompatible options (1-b)"
+      error "mount: Incompatible options (1-b)"
       exit 1
     fi
-    echo "Enable automount and mount partition(s)..."
+    echo "mount: Enable automount and mount..."
     if ! mount_device "$Device"; then
-      echo "*** Mount(s) failed"
+      error "mount: Mount(s) failed"
       exit 1
     fi
   fi
 
   if $Do_Fsck; then
     if $Do_Mount; then
-      echo "Incompatible options (1-d)"
+      error "fsck: Incompatible options (1-d)"
       exit 1
     fi
     fsck_device "$Device" false
@@ -1439,12 +1448,12 @@ if $Do_Smart_Scan; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
      false; then
-    echo "Incompatible options (2)"
+    error "smartscan: Incompatible options (2)"
     exit 1
   fi
   
   if [ $# -ne 1 ]; then
-    echo "Missing or extra parameters (2)"
+    error "smartscan: Missing or extra parameters (2)"
     exit 1
   fi
 
@@ -1457,7 +1466,7 @@ if $Do_Smart_Scan; then
   # XXX RELIABLY CREATE A FULL LIST OF BLOCKS
   # XXX Use ddrescue instead
   #
-  echo "Deprecated, doesn't work"
+  echo "smartscan: Deprecated, doesn't work"
   # Verify device is a drive not a partition
 #    smart_scan_drive "$device" "$smart_blklist"
 
@@ -1472,17 +1481,17 @@ if $Do_Copy; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
      false; then
-    echo "Incompatible options (2)"
+    error "copy: Incompatible options (2)"
     exit 1
   fi
 
   if [ $# -ne 3 ]; then
-    echo "Missing or extra parameters (2)"
+    error "copy: Missing or extra parameters (2)"
     exit 1
   fi
 
   if [[ "$Label" =~ ^/dev ]]; then
-    echo "Command line args reversed?"
+    error "copy: Command line args reversed?"
     exit 1
   fi
 
@@ -1493,7 +1502,7 @@ if $Do_Copy; then
 
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
-  Map_File=""
+  Map_File="$Label.map"
   Error_Fsck_Blklist="$Label.fsck-blklist"
   Zap_Blklist="$Label.zap-blklist"
   Smart_Blklist="$Label.smart-blklist"
@@ -1507,19 +1516,19 @@ if $Do_Copy; then
   # Verify paths for 
   let res=0
   if ! absolute_path "$Label" > /dev/null; then
-    echo "Invalid label path $Label"
+    error "copy: Invalid label path $Label"
     let res=+1
   else
     Metadata_Path="$(absolute_path "$Label")"
   fi
   if ! absolute_path "$Copy_Source" > /dev/null; then
-    echo "Invalid source path $Copy_Source"
+    error "copy: Invalid source path $Copy_Source"
     let res=+1
   else
     Copy_Source="$(absolute_path "$Copy_Source")"
   fi
   if ! absolute_path "$Copy_Dest" > /dev/null; then
-    echo "Invalid destinationpath $Copy_Dest"
+    error "Invalid destinationpath $Copy_Dest"
     let res=+1
   else
     Copy_Dest="$(absolute_path "$Copy_Dest")"
@@ -1528,125 +1537,139 @@ if $Do_Copy; then
   echo Source path: "$Copy_Source"
   echo Dest path: "$Copy_Dest"
   if [ $res -gt 0 ]; then exit 1; fi
-  Map_File="$Metadata_Path/$Label.map"
 
   if [ "$Copy_Source" == "$Copy_Dest" ] || \
      [ "$Copy_Source" == "$Metadata_Path" ] || \
      [ "$Copy_Dest" == "$Metadata_Path" ]; then
-    echo "<label>, <source> and <destination> paths must differ"
+    # XXX Use stat(1)
+    error "copy: <label>, <source> and <destination> paths must differ"
     exit 1
   fi
 
+  # Map_File remains relative to the metadata directory, no harm no foul.
+  # Source and destination paths are absolute to avoid hazards.
   if ! mkdir -p "$Label"; then
-    echo "Can't create a data dir for \"$Label\""
+    error "copy: Can't create a data dir for \"$Label\""
     exit 1
   fi
   if ! cd "$Label"; then echo "Setup error (cd $Label)"; exit 1; fi
 
-  # XXX Can't distingush between source and dest
-  if [ -s "$Map_File" ]; then
-    if ! resource_matches_map "$Copy_Source" "$Map_File"; then
-      echo "Found exisiting block map ($Label) but not for this source"
-      exit 1
-    fi
-    if ! resource_matches_map "$Copy_Dest" "$Map_File"; then
-      echo "Found exisiting block map ($Label) but not for this destination"
-      exit 1
-    fi
-  fi
-
-  # Don't accept the startup drive
-  # Prints device details if not a plain file
+  # Verify Copy_Source is eligible
   if is_device "$Copy_Source" false; then
     if device_is_boot_drive "$Copy_Source"; then
-      echo "Boot drive can't be used."
+      error "copy: Boot drive can't be used."
       exit 1
     fi
   else
-    # Stupid side effect of is_device
     if [ "$?" == "2" ]; then
-      echo "$Copy_Source: device not found"
+      # Specs "/dev/" but no such device.
+      error "copy: $Copy_Source: device not found"
       exit 1
     fi
+    # Is file
     if [ -d "$Copy_Source" ]; then
-      echo "Copy source cannot be a directory: $Copy_Source"
+      error "copy: Source cannot be a directory: $Copy_Source"
       exit 1
     fi
     if ! resource_exists "$Copy_Source"; then
-      echo "No such file $Copy_Source"
+      error "copy: No such file $Copy_Source"
       exit 1
     fi
-    echo "Copy source is a file: $Copy_Source"
+    echo "copy: Source is a file: $Copy_Source"
   fi
 
+  # Verify Copy_Dest is eligible
   if is_device "$Copy_Dest" false; then
     if device_is_boot_drive "$Copy_Dest"; then
-      echo "Boot drive can't be used."
+      error "copy: Boot drive can't be used."
       exit 1
     fi
     # Continue
   else
-    # Is file
     if [ "$?" == "2" ]; then
-      echo "$Copy_Dest: device not found"
+      # Specs "/dev/" but no such device.
+      error "copy: $Copy_Dest: device not found"
+      exit 1
+    fi
+    # Is file
+    if [ -d "$Copy_Dest" ]; then
+      error "copy: Destionation cannot be a directory: $Copy_Dest"
       exit 1
     fi
     if [ "$Copy_Dest" == "/dev/null" ]; then
-      echo "Copy destination is /dev/null (scanning)"
+      echo "copy: Destination is /dev/null (scanning)"
     else
       Opt_Scrape=true
-      if resource_matches_map "$Copy_Dest" "$Map_File"; then
-        if [ -s "$Copy_Dest" ]; then
-          continuing=true;
-        else
-          echo -n "Exisiting ddrescue map ($Label) "
-          echo "but missing it's destination file $Copy_Dest"
-          exit 1          
-        fi
-        # Contimue
+      echo "copy: Destination is a file: $Copy_Dest"
+    fi
+  fi
+
+  # Determine status: first-run or continuing.
+  if [ -s "$Map_File" ]; then
+    
+    if ! resource_matches_map "$Copy_Source" "$Map_File"; then
+      # XXX Can't distingush between source and dest in the map.
+      # XXX IF src /dst were reversed this would still pass.
+      error "copy: Existing block map ($Label) but not for $Copy_Source"
+      get_commandline_from_map "$Map_File"
+      exit 1
+    fi
+    if resource_matches_map "$Copy_Dest" "$Map_File"; then
+      if [ -s "$Copy_Dest" ]; then
+        # XXX Fair assumption
+        # XXX Could compare the first two blocks of source / dest to verify
+        continuing=true;
+      else
+        error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
+        exit 1          
       fi
-      if [ -d "$Copy_Dest" ]; then
-        echo "Copy destination cannot be a directory: $Copy_Dest"
+      # Contimue
+    else
+      error "copy: Existing block map ($Label) not for this destination"
+      get_commandline_from_map "$Map_File"
+      exit 1
+    fi
+
+    #
+    # For files, check mtimes and reject if source is newer than dest
+    #
+    if [ -f "$Copy_Source" ] && [ -f "$Copy_Dest" ] && [ $continuing ]; then
+      if [ $(stat -f %m "$Copy_Source") -gt $(stat -f %m "$Copy_Dest") ]; then
+        error "copy: Block map exists and source is newer than destinmation, quitting"
         exit 1
       fi
-      echo "Copy destination is a file: $Copy_Dest"
     fi
   fi
 
-  if is_device "$Copy_Source"; then
-    if ! unmount_device "$Copy_Source"; then
-      echo "Unmount failed $Copy_Source"
-      exit 1
-    fi
-  elif [ -d "$Copy_Source" ]; then
-    echo "Copy source cannot be a directory"
-    exit 1
-  fi
-
-  if is_device "$Copy_Dest"; then
-    if ! unmount_device "$Copy_Dest"; then
-      echo "Unmount failed $Copy_Dest"
-      exit 1
-    fi
-  fi
 
   if $continuing; then
     echo "RESUMING COPY"
   elif is_device "$Copy_Dest" false || \
        [[ ! "$Copy_Dest" =~ ^/dev/null$ && -s "$Copy_Dest" ]]; then
-    echo '*** WARNING DESTRUCTIVE ***'
-    read -r -p "OVERWTIE ${Copy_Dest}? [y/N] " response
+    echo 'copy: *** WARNING DESTRUCTIVE ***'
+    read -r -p "copy: OVERWTIE ${Copy_Dest}? [y/N] " response
     if [[ ! $response =~ ^[Yy]$ ]]; then
-       echo "...Stopping"
+       echo "copy: ...STOPPED."
        exit 1
     fi
   fi
 
-  if ! echo copy "$Copy_Source" "$Copy_Dest" "$Map_File" \
-            "$Event_Log" "$Rate_Log" "$Opt_Trim" "$Opt_Scrape"; then
+  if is_device "$Copy_Source" && ! unmount_device "$Copy_Source"; then
+    error "copy: Unmount failed $Copy_Source"
+    exit 1
+  fi
+  if is_device "$Copy_Dest" && ! unmount_device "$Copy_Dest"; then
+    error "copy: Unmount failed $Copy_Dest"
     exit 1
   fi
 
+  if ! run_ddrescue "$Copy_Source" "$Copy_Dest" "$Map_File" \
+            "$Event_Log" "$Rate_Log" "$Opt_Trim" "$Opt_Scrape"; then
+    error "copy: something went wrong"
+    exit 1
+  fi
+
+  exit 0
 fi
 
 # USAGE 3
@@ -1658,13 +1681,13 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Mount || $Do_Unmount || $Do_Fsck || \
      $Do_Copy || $Do_Smart_Scan || \
      false; then
-    echo "Incompatible options (3)"
+    error "Incompatible options (3)"
     exit 1
   fi
 
   # Need a label and metadata
   if [ $# -ne 2 ]; then
-    echo "Missing or extra parameters (3)"
+    error "Missing or extra parameters (3)"
     exit 1
   fi
 
@@ -1689,23 +1712,23 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   Slow_Files_Report="$Label.SLOW-FILES-REPORT"
 
   if ! cd "$Label" > /dev/null 2>&1; then
-    echo "No metadata found ($Label)"; exit 1;
+    error "No metadata found ($Label)"; exit 1;
   fi
 
   if [[ "$Label" =~ ^/dev ]]; then
-    echo "Command line args reversed?"
+    error "Command line args reversed?"
     exit 1
   fi
 
   # Prints device details if not a plain file
   if ! is_device "$Device" false; then
-    echo "Files reports require a partition device, not a regular file"
+    error "Reports require a partition device, not a regular file"
     exit 1
   fi
 
   # Don't accept the startup drive or regaulr files
   if device_is_boot_drive "$Device"; then
-    echo "Boot drive can't be used."
+    error "Boot drive can't be used."
     exit 1
   fi
 
@@ -1722,11 +1745,13 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
         #
         x="$(strip_partition_id "$Device")"
         if ! resource_matches_map "$x" "$Map_File"; then
-          echo "Found exisiting block map ($Label) but it's not for this device"
+          error "report: Existing block map ($Label) but not for $Device"
+          get_commandline_from_map "$Map_File"
           exit 1
         fi
       else
-        echo "Found exisiting block map ($Label) but it's not for this device"
+        error "report: Existing block map ($Label) but not for $Device"
+        get_commandline_from_map "$Map_File"
         exit 1
       fi
     fi
@@ -1735,18 +1760,18 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   if $Do_Error_Files_Report || $Do_Slow_Files_Report; then
 
     if [ ! -s "$Map_File" ]; then
-      echo "No ddrescue block map ($Label). Create with -c"
+      error "report: No ddrescue block map ($Label). Create with -c"
       exit 1
     fi
     if ! is_hfsplus "$Device"; then
-      echo "<device> must be an hfsplus partition"
+      error "report: Must be an hfsplus partition"
       exit 1
     fi
     if ! resource_matches_map "$Device" "$Map_File" &&
        ! resource_matches_map "$(strip_partition_id "$Device")" "$Map_File";
        then
-      echo -n "Found exisiting block map ($Label) "
-      echo "but it's not for this device $Device"
+      error "report: Existing block map ($Label) but not for $Device"
+      get_commandline_from_map "$Map_File"
       exit 1
     fi
 
@@ -1756,7 +1781,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
 
       fsck_device "$Device" true "$Error_Fsck_Blklist" | \
         tee "$Error_Files_Report"
-      echo "Affected files report saved in $Label/$Error_Files_Report"
+      echo "report: Error-affected files report: $Label/$Error_Files_Report"
     elif $Do_Slow_Files_Report; then
       #
       # For an eligible device, report the device name and its 
@@ -1770,9 +1795,9 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
 
       fsck_device "$Device" true "$Slow_Fsck_Blklist" | \
         tee "$Slow_Files_Report"
-      echo "Affected files report saved in $Label/$Slow_Files_Report"
+      echo "report: Slow-affected files report: $Label/$Slow_Files_Report"
     else
-      echo "MAINLINE: SHOULD NOT HAPPEN"
+      error "report: MAINLINE GLITCH, SHOULD NOT HAPPEN"
     fi
 
     # Report on stdout and saved in report file
@@ -1781,25 +1806,23 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
 
   if $Do_Zap_Blocks; then
     if [ ! -s "$Map_File" ]; then
-      echo "No block map ($Label). Create with -c"
+      error "zap: No block map ($Label). Create with -c"
       exit 1
     fi
     if ! resource_matches_map "$Device" "$Map_File" &&
        ! resource_matches_map "$(strip_partition_id "$Device")" "$Map_File";
        then
-      echo -n "Found exisiting block map ($Label) "
-      echo "but it's not for this device $Device"
+      error -n "zap: Existing block map ($Label) but not for $Device"
+      get_commandline_from_map "$Map_File"
       exit 1
     fi
-    echo "Umount and prevent automount..."
+    echo "zap: Umount and prevent automount..."
     if ! unmount_device "$Device"; then
-      echo "Unmount failed"
+      error "zap: Unmount failed"
       exit 1
     fi
 
-    if zap_from_mapfile "$Device" "$Map_File" "$Zap_Blklist"; then
-      fsck_device "$Device"
-    fi
+    zap_from_mapfile "$Device" "$Map_File" "$Zap_Blklist"
 
   fi
 

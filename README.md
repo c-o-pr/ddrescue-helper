@@ -1,34 +1,56 @@
 # DDRESCUE-HELPER
 
-**`ddrescue-helper.sh`** is Mac-oriented (for now) helper script (bash) that makes running ddrewscue easier by assisting with:
-- `Unmount` (persistent), `mount` and `fsck` of volumes
-- `ddrescue` copy (or scan) of storage devices or files 
+**`ddrescue-helper.sh`** is a helper script for running GNU ddrescue.
 
-It also uses ddrescue metadata to:
+It's currently oriented to macOS and HFS+ volumes. But is written to be extended to other file systems. Coding for Linux is under way.
+
+It can:
+
+- Unmount (persistent), re-mount, and fsck of volumes based on volume UUID.
+- Copy (or scan) of storage devices to create a bad block map and rate log (metadata) which are stored in a named directory.
 - Report files affected by errors or slow reads (for macOS HFS+ volumes)
-- Zap sectors in error regions to try to trigger a spinning drive to re-allocate.
+- Zap sectors in error regions to try to trigger a spinning drive to re-allocate sectors.
 
-This helper is currently macOS and HFS+ volume oriented. But is written to be extended to other file systems and Linux.
+By hiding details of the ddrescue command line, ensuring that source and destination volumes remain unmounted, and performaning simple consistency checks, it makes using ddrescue a bit easier.
 
-### GNU DDRESCUE
+It targets bash v3.2+, which is old enough to avoid compabability issues.
+ 
+### ABOUT GNU DDRESCUE
 
-GNU ddrescue is an indispensible tool for copying storage devices (drives, paritions, or files) in a way that gracefully handles read errors, allowing as much data as possible to be recovered from the source.
+GNU ddrescue is a tool for copying storage devices (drives, partitions, or files) in a way that gracefully handles read errors and restarts, allowing as much data as possible to be recovered from the source.
 
 A side effect of running ddrescue is the creation of two kinds of metadata for the copy source:
-- Map of areas with read errors and their extent
-- Read rate log
+- A "domain map" of device regions with read errors and their extents;
+- A rate log of read performance measured second-by-second.
 
 GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
 # DDRESCUE-HELPER BACKGROUND AND PURPOSE
 
-The idea of for this helper script came about from dealing with media errors occuring during local backups of spinning drives containing single HFS+ data volumes, and trying to adapt to these errors and continue to use problematic drives by setting files that cover the errors. This worked until I ran into a situation where a media error affected volume metadata (inodes and journal) resulting the volume to become inaccessible. Working with the volume caused the system to hang and eventually crash.
+The idea for this helper came about from dealing with media errors occurring during local backups of spinning drives. As spinning drives fill up and age they become prone to bad regions.
 
-As spinning drives fill up and age they become prone to bad regions. A common way of dealing with read errors is with backups and drive replacement.
+I keep backups, and I prefer to replace a drive with any errors. But for reasons of being cheap, I've wanted to keep using drives affected by small number of bad blocks for as long as possible. One way to do this is to set aside files that cover bad spots. But I ran into a case where filesystem metadata was affected and a drive became unmountable.
 
-While I prefer to replace a drive with any errors, for reasons of frugality I've wanted to keep using drives affected by very small number of bad blocks.
+To recover from this, I started by looking at SMART and hdparm(1) on Linux to find and re-map bad blocks. I also became aware of the `badblocks(8)` utility. 
+These tools are interesting, but due to vendor inconsistencies with SMART, and that many of my data drives are attached by USB, which prevents access to SMART capabilities, I couldn't easily build a helper based on them. SMART long tests take a long time to run and aren't supported by many common drives.
 
-Dealing with device errors is a drive, file-system and data specific chore, involving a range of factors:
+My daily driver is a hackintosh and `hdparm(8)` and `badblocks(8)` are not available, even via 3rd-party ports.
+
+[As an interesting aside, I discovered that when a USB drive is passed through to an Ubuntu VM via Parallels, `smartctl(8)` works as if it were locally attached by SATA.]
+
+There's no hdparm(8) for macOS, but I discovered that by careful use of dd(1), I can trigger a spinning drive to re-allocate a bad sector. Using this tactic allowed me to regain access to the unmountable drive I mentioned above, and `dd(1)` is widely available.
+
+GNU `ddrescue(1)` is an indispensable tool for recovering failing drives. And compared to SMART, it's far simpler and more consistent to use to scan a whole or partition or drive with ddrescue. The ddrescue then parse ddrescue's error map into a bad block list. But it's just complicated enough to make it difficult to recall how to use it. And it's very important that when `ddrescue` is being used to recover data that the source and destination devices are not automounted so that they remain in a consistent state until the copy is complete, where the copy may be interrupted by a timeout, drive disconnection or a system crash. 
+
+Finally, it so happens that my data drives are formatted HFS+. Along the way I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to.
+
+`ddrescue` can also generate a rate log, which like the bad block map, can be converted into a block list and fed to `fsck.hfs` to find files affected by drive regions with very slow reads.
+
+Here I found I all the pieces of a puzzle for how to cope with my cranky drives, so I put all these ideas together into this `ddescue-helper.sh` bash script.
+
+# DDRESCUE-HELPER.SH OVERVIEW
+
+Dealing with device errors is a drive, filesystem, and data specific chore, involving a range of factors:
 
 a) Knowing what files are affected by read errors.
 
@@ -38,25 +60,25 @@ c) Preventing re-use of bad drive regions.
 
 d) Triggering a drive to re-allocate bad blocks.
 
-e) Checking and repairing filesystem structure to recover from corruption associated with bad blocks.
+e) Checking and repairing filesystem structure to recover from corruption.
 
 `ddrescue-helper.sh` assists as follows:
 
-- Simplifies operating ddrescue by hiding standard options.
-- Keeps ddrescue metadata in a named folder and checks that existing map agrees with the specific source and destination.
-- Persistently unmounts volumes on a drive to ensure that drive or partition isn't changed by the OS while rescue copy is running.
-- Performs drive-to-drive, drive-to-image (file), or file-to-file copying. 
-  - Scanning a drive (copying to /dev/null) creates the ddrescue "map" read errors and a read-rate log for slow areas without needing a copy destination.
-  - In the case of specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., video) compared to losing access to the whole file. 
-- Copies and scans can be stopped with ^C and continued by rerunning the same command.
-- For macOS HFS+ volumes, a report of affected files can be generated from the ddrewscue meteadata.
-- The bad blocks in the error map can be zapped to trigger the drive to re-allocate them. This can allow an drive that's inaccessible due to read errors in filesystem metadata to be accessed and repaired to regain access its contents.
-- Runs fsck on a drive.
-
+- Simplifies operating ddrescue by hiding standard options and performing simple consistency checks.
+- Keeps ddrescue metadata in a named folder and checks that existing domain map agrees with the specific source and destination.
+- Persistently unmounts volumes on a drive to ensure that drive or partition isn't changed by the OS while a rescue copy is running.
+- Performs drive-to-drive, drive-to-image (file), or file-to-file copying and scanning: 
+  - Scanning a drive (copying to /dev/null) creates the bad block "map" based on read errors and also generates a read-rate log for slow areas.
+  - In the case of specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
+- Copies and scans can be stopped with ^C and continued by rerunning the same command. Recovery is also restartable after drive disconnection or system crash.
+- For macOS HFS+ volumes, a report of affected files can be generated from the ddrescue metadata for both bad-blocks and slow reads.
+- The bad blocks can be "zapped" to trigger the drive to re-allocate them. This can regain access a volume that's inaccessible due to read errors in filesystem metadata.
+- Run fsck on a whole drive or a partition.
+- Re-mount a drive or partition and disable persistent automount prevention.
 
 # IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
 
-My expeirence is that large (4TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
+My experience is that large (TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
 
 By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This allows a troublesome drive to continue to be used.
 
@@ -74,11 +96,11 @@ __—USE AT YOUR OWN RISK—__
 
 MAKING A TERRIBLE MISTAKE IS LIKELY
 
-# USAGE SUMMARY
+# USAGE
 
 There are three modes of operation:
 
-#### 1. Unount, mount, and fsck a drive or partition.
+#### 1. Unmount, mount, and fsck a drive or partition.
 
 `ddrescue_helper.sh -m | -u | -f <device>`
  
@@ -109,7 +131,7 @@ XXX If files are relative paths, they located relative to the contents of the <l
   
 #### 3 Print affected files and zap blocks
 
-`ddrescue_helper.sh -p | -s | -z | -Z <label> <device>`
+`ddrescue_helper.sh -p | -s | -Z <label> <device>`
 
 Use the block map generated by copy to print a list of files affected by read errors (HFS+ only) and zap blocks in areas affected by errors to nudge the drive to reallocate these areas. This is destructive to those blocks, but it can allow recovery of space from large media, and can enable fsck to repair a volume that was stuck at a read timeout.
 
@@ -119,30 +141,34 @@ This helper is macOS / HFS+ centric, but the script is made in a way to let supp
 
 **Usability**
 
-- [ ] ADD Check for <file> to <file> if destination is directory and reuse
-file name.
-- [ ] ADD auto unmount of destination drive and help with removal of stale fstab entires for the destination after copy is complete.
+- [ ] Fix awareness of the EFI service parition
+- [ ] ADD -z print a summary of LBA extents affected by read errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
+- [ ] ADD -p -z checks for unmanageably large numbers of problem blocks in the map
+- [ ] ADD Force use of /dev/rdisk on macOS for speed.
+- [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
 - [ ] ADD /dev/ specific fstab entries to prevent automount; including adding and removal without a corresponding drive present.
 - [ ] ADD help for changing volume LABELs and partition/volume UUIDs
 /System/Library/Filesystems/TYPE.fs/Contents/Resources/TYPE.util -s rdisk21s10
 No "/dev", -s to set new random UUID
-- [ ] ADD Only auto unmount for copy not scan ?? maybe not
-- [ ] ADD Save the ddrecue work summaries for each run so that progress can be re-examined.
+- [ ] ADD Only auto unmount for copy/zap not scan ?? maybe not
+- [ ] ADD Save the ddrescue work summaries for each run so that progress can be examined.
 - [ ] ADD Input a list of files to copy (source).
 - [ ] ADD Option to remove metadata by <label>
-- [ ] ADD Comsistency checks for volume names and helper metadata
+- [ ] ADD Consistency checks for volume names and helper metadata
 - [ ] XXX fsck robustness assistance for corrupted volumes
 - [ ] ADD GPT / MBR / table recovery
 - [ ] ADD Partition superblock recovery
 - [ ] XXX Fix src/dst relative file path naming to be per CWD not the label folder
-- [ ] XXX Devices must be /dev qualified although this could be inferred
+- [ ] XXX Devices must be "/dev/" specced although this could be inferred
 - [ ] XXX Verify Label tolerates whitespace or disallow.
 - [ ] ADD selectable rate limit for -P
 - [ ] ADD zap preview and confirmation
 - [ ] ADD prettify the output of -Z and save it in a log
 - [ ] ADD a summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
-- [x] XXX indentical source / dest check needs to cosnider different paths to same resource
+- [x] ADD Check for source file is newer than dest file
+- [x] ADD Check for <file> to <file> if destination is directory
+- [x] XXX identical source / dest check needs to consider different paths to same resource
 - [x] XXX -s Slow reads block spread for best coverage.
 - [x] XXX -p -s Adjust partition offset based on device specified
 - [x] ADD rate log reporting for slow areas and related files
@@ -150,8 +176,8 @@ No "/dev", -s to set new random UUID
 
 **Documentation**
 
-- [ ] XXX After cloning a drive or partition, the duplicates are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be reenumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID. 
-- [ ] XXX Explain the importance of unmount.
+- [ ] XXX After cloning a drive or partition, the duplicates are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be re-enumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID. 
+- [ ] XXX Explain the importance of unmount and hazards of remount.
 - [ ] ADD Explanation of the ESP
 - [ ] ADD basics of ddrescue, and device specification, inc. hazards
 - [ ] XXX Device id in OS may change between runs (doc)
@@ -160,13 +186,13 @@ No "/dev", -s to set new random UUID
 
 **Robustness**
 
+- [ ] XXX Use stat(1) to verify devices and check for src/dst links
 - [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the mapfile due to ambiguous whitespace
 - [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+. CCC used to offer a helper; now it's a UI option.
 - [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a baad volume worse before copying.
 - [ ] ADD zap blocklist sanity check for drive/part metadata regions
-- [ ] ADD -p -z checks for unmanagebly large numbers of problem blocks in the map
-- [ ] XXX For -p -s Figure out a way to look up target device from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
-- [x] ADD copy destination overwrite comnfirmation
+- [ ] XXX For -p -s Figure out a way to look up src/dst devices from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
+- [x] ADD copy destination overwrite confirmation
 
 **Linux & Filesystem Support**
 
@@ -190,6 +216,12 @@ No "/dev", -s to set new random UUID
 
 # Supporting Documentation
 
+**Macports package manager**
+https://www.macports.org/install.php
+
+**Homebrew — Package Manager for macOS (or Linux)**
+https://brew.sh/
+
 **GNU ddrescue Manual**
 https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html
 
@@ -199,6 +231,4 @@ https://ss64.com/mac/diskutil.html
 **dd(1)**
 https://man7.org/linux/man-pages/man1/dd.1.html
 
-**ddrutility**
-https://sourceforge.net/p/ddrutility/wiki/Home/
 
