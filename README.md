@@ -140,7 +140,7 @@ These funtions utilize the `ddrescue` block map data resulting from copy / scan.
 > [!WARNING] 
 > THERE ARE NO SANITY CHECKS FOR ZAP — USE WITH GREAT CAUTION.
 
-# BACKGROUND ON CREATIONS OF THIS TOOL
+# BACKGROUND & PURPOSE
 
 The idea for this helper came about from dealing with media errors occurring during local backups of spinning drives. As spinning drives fill up and age they become prone to bad regions.
 

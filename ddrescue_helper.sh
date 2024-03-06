@@ -302,9 +302,9 @@ zap_from_smart() {
   return 1
 }
 
-############################################
-# FUNCTIONS SUPPORTING SMART BLOCK REPORTING
-############################################
+#####################################
+# FUNCTIONS FOR SMART BLOCK REPORTING
+#####################################
 
 start_smart_selftest() {
   echo "Starting long self test"
@@ -366,9 +366,9 @@ smart_scan_drive() {
   done
 }
 
-######################################################
-# FUNCTIONS SUPPORTING BLOCK LISTS FOR REPORTS AND ZAP
-######################################################
+###############################################
+# FUNCTIONS FOR BLOCK LISTS FOR REPORTS AND ZAP
+###############################################
 
 sanity_check_blklist() {
   local blklist="$1"
@@ -703,13 +703,73 @@ run_ddrescue() {
   return $?
 }
 
-
 ########################
 # DEVICE LOGIC FUNCTIONS
 ########################
 
 resource_exists() {
-  [ -f "$1" ] || [ -b "$1" ] || [ -c "$1" ]
+  [ -f "$1" ] || [ -L "$1" ] || [ -b "$1" ] || [ -c "$1" ]
+}
+
+get_inode() {
+  local path="$1"
+  if [ ! -f "$path" ]; then return 1;  fi
+  case $(get_OS) in
+    macOS)
+      stat -f %i "$path" 2> /dev/null
+      ;;
+    Linux)
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+get_symlink_target() {
+  local path="$1"
+  case $(get_OS) in
+    macOS)
+      # stat exit status returns 0 regardless wheether symnlink is resolved.
+      target=$( stat -f %Y "$path" 2> /dev/null )
+      if [ ! -z "$target" ]; then echo "$target"; else return 1; fi
+      ;;
+    Linux)
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+get_alias_target() {
+  local path="$1"
+  if [ ! -f "$path" ]; then return 1;  fi
+  case $(get_OS) in
+    macOS)
+      # Heredoc exit status returns 0 regardless wheether alias is resolved.
+      target=$( osascript -e'on run {a}
+        set p to POSIX file a
+        tell app "finder" 
+          set Xype to kind of item p
+          if Xype is "Alias" then
+            set myPath to original item of item p
+            set myPOSIXPath to quoted form of POSIX path of (myPath as text)
+            do shell script "echo " & myPOSIXPath
+          end if
+        end tell
+      end' "$(echo "$path")" 2> /dev/null )
+      if [ ! -z "$target" ]; then echo "$target"; else return 1; fi
+      ;;
+    Linux)
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 get_commandline_from_map() {
@@ -1394,7 +1454,7 @@ shift $((OPTIND - 1))
 if ! $Do_Mount && ! $Do_Unmount && ! $Do_Fsck && \
    ! $Do_Copy && ! $Do_Smart_Scan && \
    ! $Do_Error_Files_Report && ! $Do_Slow_Files_Report && \
-   ! $Do_Summarize_Zap_Regions && ! $Do_Zap_Blocks && \
+   ! $Do_Zap_Blocks && \
    true; then
   echo "$(basename "$0"): Nothing to do (-h for usage)"
   exit 0
@@ -1407,7 +1467,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
   if \
      $Do_Copy || $Do_Smart_Scan || \
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
-     $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
+     $Do_Zap_Blocks || \
      false; then
     error "Incompatible options (1)"
     exit 1
@@ -1468,7 +1528,7 @@ if $Do_Smart_Scan; then
      $Do_Mount || $Do_Unmount || $Do_Fsck \
      $Do_Copy || \
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
-     $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
+     $Do_Zap_Blocks || \
      false; then
     error "smartscan: Incompatible options (2)"
     exit 1
@@ -1501,7 +1561,7 @@ if $Do_Copy; then
      $Do_Mount || $Do_Unmount || $Do_Fsck \
      $Do_Smart_Scan || \
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
-     $Do_Summarize_Zap_Regions || $Do_Zap_Blocks || \
+     $Do_Zap_Blocks || \
      false; then
     error "copy: Incompatible options (2)"
     exit 1
@@ -1535,7 +1595,7 @@ if $Do_Copy; then
   
   continuing=false
 
-  # Verify paths for 
+  # Verify paths don't collide
   let res=0
   if ! absolute_path "$Label" > /dev/null; then
     error "copy: Invalid label path $Label"
@@ -1555,25 +1615,25 @@ if $Do_Copy; then
   else
     Copy_Dest="$(absolute_path "$Copy_Dest")"
   fi
-  echo Metadata path: "$Metadata_Path"
-  echo Source path: "$Copy_Source"
-  echo Dest path: "$Copy_Dest"
+  echo "copy: Metadata path: $Metadata_Path"
+#  echo "copy: Source path: $Copy_Source"
+#  echo "copy: Dest path: $Copy_Dest"
   if [ $res -gt 0 ]; then exit 1; fi
 
   if [ "$Copy_Source" == "$Copy_Dest" ] || \
      [ "$Copy_Source" == "$Metadata_Path" ] || \
      [ "$Copy_Dest" == "$Metadata_Path" ]; then
-    # XXX Use stat(1)
     error "copy: <label>, <source> and <destination> paths must differ"
     exit 1
   fi
-
+  
   # Map_File remains relative to the metadata directory, no harm no foul.
   # Source and destination paths are absolute to avoid hazards.
   if ! mkdir -p "$Label"; then
     error "copy: Can't create a data dir for \"$Label\""
     exit 1
   fi
+#  echo "copy: Matadata directory: ${Label}"
   if ! cd "$Label"; then echo "Setup error (cd $Label)"; exit 1; fi
 
   # Verify Copy_Source is eligible
@@ -1589,6 +1649,7 @@ if $Do_Copy; then
       exit 1
     fi
     # Is file
+    #
     if [ -d "$Copy_Source" ]; then
       error "copy: Source cannot be a directory: $Copy_Source"
       exit 1
@@ -1597,9 +1658,17 @@ if $Do_Copy; then
       error "copy: No such file $Copy_Source"
       exit 1
     fi
+    if _t="$(get_symlink_target "$Copy_Source")"; then
+      error "copy: Source cannot be symlink: $Copy_Source -> $_t"
+      exit 1
+    fi
+    if _t="$(get_alias_target "$Copy_Source")"; then
+      error "copy: Source cannot be alias: $Copy_Source -> $_t"
+      exit 1
+    fi
     echo "copy: Source is a file: $Copy_Source"
   fi
-
+    
   # Verify Copy_Dest is eligible
   if is_device "$Copy_Dest" false; then
     if device_is_boot_drive "$Copy_Dest"; then
@@ -1621,6 +1690,14 @@ if $Do_Copy; then
     if [ "$Copy_Dest" == "/dev/null" ]; then
       echo "copy: Destination is /dev/null (scanning)"
     else
+      if _t="$(get_symlink_target "$Copy_Dest")"; then
+        error "copy: Destination cannot be symlink: $Copy_Dest -> $_t"
+        exit 1
+      fi
+      if _t="$(get_alias_target "$Copy_Dest")"; then
+        error "copy: Destination cannot be alias: $Copy_Dest -> $_t"
+        exit 1
+      fi
       Opt_Scrape=true
       echo "copy: Destination is a file: $Copy_Dest"
     fi
@@ -1663,6 +1740,11 @@ if $Do_Copy; then
     fi
   fi
 
+  # Unlikely edge case of hard links to same file
+  if [ "$(get_inode "$Copy_Source")" == "$(get_inode "$Copy_Dest")" ]; then
+    error "copy: source & destination are same file (inode: $(get_inode "$Copy_Source"))"
+    exit 1
+  fi
 
   if $continuing; then
     echo "RESUMING COPY"
