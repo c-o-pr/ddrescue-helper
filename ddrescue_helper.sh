@@ -606,7 +606,7 @@ make_ddrescue_helper() {
   local helper_script="${1:-ddrescue.sh}"
 
   if ! which ddrescue; then
-    echo "make_ddrescue_helper: need GNU ddrescue to copy"
+    echo "make_ddrescue_helper: ddrescue not found on PATH"
     return 1
   fi
 
@@ -1580,6 +1580,15 @@ if $Do_Copy; then
      $Do_Zap_Blocks || \
      false; then
     error "copy: Incompatible options (2)"
+    exit 1
+  fi
+
+  if ! which xddrescue; then
+    error "ddrescue(1) not found on PATH"
+    error 
+    error "You can obtain ddrescue using homebrew or macports"
+    error "If you are not familiar with packages on macUS, use Homebrew."
+    error "https://brew.sh/"
     exit 1
   fi
 

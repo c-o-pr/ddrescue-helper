@@ -51,7 +51,7 @@ Dealing with media errors is a drive, filesystem, and file data specific task, i
 - Copy or scan drive-to-drive, drive-to-file (image), or file-to-file.
 
 > [!NOTE]
-> Scanning a drive means copying to /dev/null to create the bad block "map" based on read errors and generate a read-rate log for slow areas. Scan surveys a source without recuing any data.
+> Scanning a drive means copying to /dev/null to create the bad block "map" based on read errors and generate a read-rate log for slow areas. Scan surveys a source without rescuing any data.
 >
 > In the case of working with specific files, when recovery from a backup isn't possible, a small error region may be tolerable (e.g., a small content loss in a media file) as compared to alternative of losing access to the whole file.
 >
@@ -69,7 +69,7 @@ Dealing with media errors is a drive, filesystem, and file data specific task, i
 >
 > __USE AT YOUR OWN RISK__
 
-This script has been coded with care, but unexpected behaviors are possible. Shell sxcripts are pesky because they rely heavily on text substitution.
+This script has been coded with care, but unexpected behaviors are possible. Shell scripts are pesky because they rely heavily on text substitution.
 
 THE WISE DATA HOARDER WILL HAVE BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
 
@@ -83,7 +83,7 @@ Making a terrible mistake is possible, but the skilled may be rewarded
 >
 > My experience is that large (TB+) commodities spinning hard drives have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild-ass guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
 >
-> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This may allow contimnued use of a drive with minor errors.
+> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files and zapping bad-blocks to re-allocate according to the drives spare provisioning. This may allow continued use of a drive with minor errors.
 
 # COMMAND OPTIONS
 
@@ -123,7 +123,7 @@ For copy `-X` is implied to recover as much data as possible.
   
 #### 3 PRINT AFFECTED FILES AND ZAP BLOCKS
 
-These funtions utilize the `ddrescue` block map data resulting from copy / scan.
+These functions utilize the `ddrescue` block map data resulting from copy / scan.
 
 `ddrescue_helper.sh -p | -s | -z <label> <device>`
 
@@ -157,7 +157,7 @@ While there's no `hdparm` for macOS, I discovered that by careful use of `dd`, I
 
 GNU ddrescue is an indispensable tool for recovering data from failing drives. And compared to SMART, it's far simpler and more consistent to use it to scan a drive or partition, then parse the the map domain into a bad block list for use with `dd`. 
 
-Using `ddrescue` is just complicated enough to make it difficult to recallthe command syntax, so a helper seems natural.
+Using `ddrescue` is just complicated enough to make it difficult to recall the command syntax, so a helper seems natural.
 
 It's very important that when recovering data that the source and destination devices are not automounted so that they remain in a consistent state until the copy is complete. A copy may be interrupted by a timeout, drive disconnection or a system crash, or intentionally interrupted.
 
@@ -174,7 +174,7 @@ This helper is macOS / HFS+ centric, but the script is made so support can be ad
 **Usability**
 
 - [ ] XXX fsck whole drive should check the overal drive as well as all partitions.
-- [ ] ADD Improve situational awareness of the EFI service parition
+- [ ] ADD Improve situational awareness of the EFI service partition
 - [ ] ADD -p -z checks for unmanageably large numbers of problem blocks in the map
 - [ ] ADD Force use of /dev/rdisk on macOS for speed.
 - [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
@@ -233,7 +233,7 @@ No "/dev", -s to set new random UUID
 - [ ] ADD Linux ddrutility support to full partition / drive copy for NTFS
 - [ ] XXX Test -m -u -c -p -s -z Z on Linux
 - [ ] ADD ext2,3,4 file lookup and fsck
-- [ ] ADD FAT, NTFS file lookup and fsck
+- [ ] ADD FAT, NTFS file lookup and fsck, including ddrutility for sparse recovery of NTFS volumes.
 - [ ] ADD pass additional options to ddrescue
 - [ ] ADD badblocks(8) style integration for ext3/4
 
