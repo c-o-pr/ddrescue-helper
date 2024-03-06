@@ -356,7 +356,7 @@ smart_scan_drive() {
     #
     if [ "$fixed_count" -eq "$x" ]; then finished=true; continue; fi
 
-    create_smartctl_blklist "$drive" "$smart_blklist"
+    create_smartctl_error_blklist "$drive" "$smart_blklist"
 
 #   zap_from_smart "$drive"
 
@@ -459,6 +459,50 @@ parse_ddrescue_map_for_fsck() {
   done 
 }
 
+parse_rate_log_for_fsck() {
+  local rate_log="$1"
+  local slow_blklist="$2" # Output file name
+  local slow_limit="$3" # Regions slower than this are selected
+
+  local n
+  local addr
+  local rate
+  local ave_rate
+  local bad_areas
+  local bad_size
+  local interval
+  local blk
+  local cnt
+  grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
+  while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
+    # Log entires are issued once per second Compute a sparse list of blocks
+    # based on the rate for that second to cover the region with 10 samples at
+    # evenly spaced intervals. Advanced Format drives are fundamentally 4096
+    # byte formats, so place samples on mod 4096 byte intervals
+    # Interger div rounds down.
+    # 
+    if (( rate < "$slow_limit" )); then
+      interval=$(( rate / 50 / 4096 ))
+      for (( i=0; i<=interval; i++ )); do
+        echo $(( addr + ( i * interval * 4096 ) )) 0x200
+      done
+    fi
+  done | \
+  # The compendium of logs may duplicate slow regions so filter dups out
+  # EXTS just for debugging the calculation
+  uniq | \
+  sort -n | \
+  ddrescue_map_bytes_to_blocks | tee "$slow_blklist.EXTS" | \
+  while read blk cnt; do
+    let blk=$blk-$partition_offset
+    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
+       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
+    for (( i = 0; i < cnt; i++ )); do
+      echo $(( blk + i ))
+    done
+  done >| "$slow_blklist"
+}
+
 create_ddrescue_error_blklist() {
   local device="$1"
   local map_file="$2"
@@ -488,9 +532,14 @@ create_ddrescue_error_blklist() {
   fi
   echo "ERROR BLOCKLIST: $fsck_blklist"
   parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blklist" >| "$fsck_blklist"
+  
+  if [ ! -s "$fsck_blklist" ]; then
+    echo "create_ddrescue_error_blklist: NO ERROR BLOCKS"
+    exit 0
+  fi
 }
 
-create_smartctl_blklist() {
+create_smartctl_error_blklist() {
   local device="$1"
   local smart_blklist="$2" # Output file name
 
@@ -499,51 +548,11 @@ create_smartctl_blklist() {
   sudo smartctl -l selftest "$device" | \
     grep "#" | sed 's/.* //' | grep -v -- "-" | \
     uniq | sort -n > "$smart_blklist"
-}
 
-parse_rate_log_for_fsck() {
-  local rate_log="$1"
-  local slow_blklist="$2" # Output file name
-  local slow_limit="$3" # Regions slower than this are selected
-
-  local n
-  local addr
-  local rate
-  local ave_rate
-  local bad_areas
-  local bad_size
-  local interval
-  local blk
-  local cnt
-  echo -n "" >| "$slow_blklist"
-  grep "^ *[0-9]" "${rate_log}"-* | \
-  while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
-    # Log entires are issued once per second Compute a sparse list of blocks
-    # based on the rate for that second to cover the region with 10 samples at
-    # evenly spaced intervals. Advanced Format drives are fundamentally 4096
-    # byte formats, so place samples on mod 4096 byte intervals
-    # Interger div rounds down.
-    # 
-    if (( rate < "$slow_limit" )); then
-      interval=$(( rate / 50 / 4096 ))
-      for (( i=0; i<=interval; i++ )); do
-        echo $(( addr + ( i * interval * 4096 ) )) 0x200
-      done
-    fi
-  done | \
-  # The compendium of logs may duplicate slow regions so filter dups out
-  # EXTS just for debugging the calculation
-  uniq | \
-  ddrescue_map_bytes_to_blocks | tee "$slow_blklist.EXTS" | \
-  sort -n | \
-  while IFS=" " read blk cnt; do
-    let blk=$blk-$partition_offset
-    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
-    for (( i = 0; i < cnt; i++ )); do
-      echo $(( blk + i ))
-    done
-  done
+  if [ ! -s "$fsck_blklist" ]; then
+    echo "create_smartctl_error_blklist: NO ERROR BLOCKS"
+    exit 0
+  fi
 }
 
 create_slow_blklist() {
@@ -551,7 +560,7 @@ create_slow_blklist() {
   local map_file="$2"
   local rate_log="$3"
   local slow_blklist="$4" # Output file name
-  local slow_limit="${5:-$5000000}" # Regions slower than this are selected
+  local slow_limit="${5:-5000000}" # Regions slower than this are selected
 
   # This only makes sense for drives, not for regular files.
   # Create a list of block addresses for rate log entires with eads slower
@@ -576,10 +585,14 @@ create_slow_blklist() {
     fi
   fi
 
-  echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_blklist"
+  echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_limit"
   parse_rate_log_for_fsck "$rate_log" "$slow_blklist" "$slow_limit" >> \ 
     "$slow_blklist"
 
+  if [ ! -s "$slow_blklist" ]; then
+    echo "create_slow_blklist: NO SLOW BLOCKS"
+    exit 0
+  fi
 }
 
 ################################
@@ -774,7 +787,10 @@ get_alias_target() {
 
 get_commandline_from_map() {
   local map_file="$1"
-  if [ ! -s "$map_file" ]; then echo "XXX"; exit 1; fi
+  if [ ! -s "$map_file" ]; then
+    echo "get_commandline_from_map: no map file"
+    exit 1
+  fi
   grep "# Command line: ddrescue" "$map_file"
 }
 
@@ -1040,10 +1056,10 @@ list_partitions() {
 
   # XXX return values are on stdout
   # XXX ensure debug goes to stderr
-# XXX        mapfile partitions < \
-# XXX         <( diskutil list "$device" | \
-# XXX            grep '^ *[2-9][0-9]*:' | \
-# XXX            sed -E 's/^.+(disk[0-9]+s[0-9]+).*$/\1/' )
+  # XXX        mapfile partitions < \
+  # XXX         <( diskutil list "$device" | \
+  # XXX            grep '^ *[2-9][0-9]*:' | \
+  # XXX            sed -E 's/^.+(disk[0-9]+s[0-9]+).*$/\1/' )
 
   case $(get_OS) in
 
@@ -1887,13 +1903,6 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
         tee "$Error_Files_Report"
       echo "report: Error-affected files report: $Label/$Error_Files_Report"
     elif $Do_Slow_Files_Report; then
-      #
-      # For an eligible device, report the device name and its 
-      # files containing slow areas.
-      # XXX
-      # For other deivces and regular files, report the source file name the
-      # log sorted by rate.
-      #
       create_slow_blklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Blklist"
 #      cat "$Slow_Fsck_Blklist"
 

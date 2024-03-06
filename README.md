@@ -198,6 +198,7 @@ No "/dev", -s to set new random UUID
 - [ ] ADD prettify the output of -Z and save it in a log
 - [ ] ADD a summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
+- [x] ADD Sanity checks for src/dst aliases and symlinks
 - [x] ADD -z print a summary of LBA extents affected by read errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
 - [x] ADD Check for source file is newer than dest file
 - [x] ADD Check for <file> to <file> if destination is directory
@@ -219,12 +220,12 @@ No "/dev", -s to set new random UUID
 
 **Robustness**
 
-- [ ] XXX Use stat(1) to verify devices and check for src/dst links
 - [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the mapfile due to ambiguous whitespace
 - [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+. CCC used to offer a helper; now it's a UI option.
 - [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a baad volume worse before copying.
 - [ ] ADD zap blocklist sanity check for drive/part metadata regions
 - [ ] XXX For -p -s Figure out a way to look up src/dst devices from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
+- [x] XXX Use stat(1) to check for src/dst hard links
 - [x] ADD copy destination overwrite confirmation
 
 **Linux & Filesystem Support**
