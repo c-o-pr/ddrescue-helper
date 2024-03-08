@@ -28,27 +28,27 @@ GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
 # USAGE OVERVIEW
 
-Dealing with media errors is a drive, filesystem, and file data specific task, involving a range of factors:
+Dealing with drive media errors can involve working with a whole drive, specific paritions, or specific files. For example:
 
 — Knowing what files are affected by read errors.
 
 — Recovering as much data as possible when no backup exists.
 
-— Preventing re-use of bad drive regions.
+— Preventing disturbance of volume structures while recovery is in progress.
 
 — Triggering a drive to re-allocate bad blocks.
 
-— Checking and repairing filesystem structure to recover from corruption.
+— Checking and repairing filesystem structure to recover from corruption assciated with re-allocated blocks.
 
 `ddrescue-helper.sh` assists as follows:
 
-- Simplifies operating `ddrescue` by hiding standard options and performing simple consistency checks.
+- Simplifies operating GNU ddrescue by hiding standard options and performing simple consistency checks.
 
 - Keeps `ddrescue` metadata in a named folder and checks that existing domain map agrees with command-specific source and destination.
 
 - Persistently unmounts volumes to ensure that drive or partition isn't changed by the OS while a rescue copy is running. Re-mount a drive or partition and disable persistent automount prevention.
 
-- Copy or scan drive-to-drive, drive-to-file (image), or file-to-file.
+- Copies (or scans) drive-to-drive, drive-to-file (image), or file-to-file.
 
 > [!NOTE]
 > Scanning a drive means copying to /dev/null to create the bad block "map" based on read errors and generate a read-rate log for slow areas. Scan surveys a source without rescuing any data.
@@ -134,7 +134,7 @@ These functions utilize the `ddrescue` block map data resulting from copy / scan
 
 `-p` Print a list of files affected by read errors (HFS+ only)
 
-`-s` Print a list of files affected by slow reads, less than 5MB/s (HFS+ only)
+`-s` Print a list of files affected by slow reads, less than 1MB/s (HFS+ only)
 
 `-z` Zap preview. Print a list of blocks that will be affected -Z but don't zap. If the list is large (100 or more) it's likely not productive to attempt zapping.
 
@@ -144,6 +144,9 @@ These functions utilize the `ddrescue` block map data resulting from copy / scan
 
 > [!WARNING] 
 > THERE ARE NO SANITY CHECKS FOR ZAP — USE WITH GREAT CAUTION.
+
+> [!TIP] 
+> If you have bad-block or slow-read metadata for an entire drive, you can use it with `-p` and `-s` which are partition (volume) oriented. The needed partition offset will be calculated automatically and applied to the blocks list used to generatie the reports.
 
 # BACKGROUND & PURPOSE
 

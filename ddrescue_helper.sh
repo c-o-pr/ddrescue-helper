@@ -99,19 +99,13 @@ $(basename "$0") Usage:
 
   -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
 
-  -Z Zap blocks listed as errors in an existing block map.
-     Uses dd to write specific discrete blocks in an attempt
-     to make the drive re-allocate them.
-
-     Map data from an unfinished copy can be used with -Z.
-
-  -p Print report of HFS+ partition's files affected by error regions 
+  -p Report for HFS+ partition of files affected by error regions 
      listed in the ddrescue map for <label>. Affected files can be
      restored from backup or rescued individually using this helper.
 
-  -s Print report of HFS+ partition's files affected by regions of
-     slow reads listed in the ddrescue rate log for <label>
-     (less than 5 MB/s). Affected files can be set aside to avoid
+  -s Report for HFS+ partition of files affected by regions of
+     slow reads as listed in the ddrescue rate log for <label>
+     (slow is less than 1 MB/s). Affected files can be set aside to avoid
      further dependency on that drive region.
 
      For print, <device> must a HFS+ partition (e.g. /dev/rdisk2s2),
@@ -123,14 +117,27 @@ $(basename "$0") Usage:
      Map data from an unfinished copy can be used with -p and -s with the
      obvious caveat of missing infomration.
 
+  -z Print a preview of error blocks to be zapped, allowing you to sanity check
+     the implications before actually zapping with -Z. For example, if you
+     have errors in the first 40 512-byte blocks for a GPT drive, you will
+     overwrite the drive's partition table, so make a copy of 
+     the backup partition table first (beyond the scope of this help).
+
+  -Z Zap blocks listed as errors in an existing block map.
+     Uses dd to write specific discrete blocks in an attempt
+     to make the drive re-allocate them.
+
+    Map data from an unfinished copy or scan can be used with -p -s -z -Z,
+    assuming any bad blocks or slow areas have been recorded.
+    
   REQUIRES
     Bash V3+
     GNU ddrescue: [ macports | brew ] install ddrescue
-    fsck_hfs(8) - mac builtin
+    fsck(8) - mac builtin
     diskutil(8) - mac builtin
 
   SEE
-    GNU ddrescue manual
+    GNU ddrescue Manual
     https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html
 
   SOURCE OF THIS SCRIPT
@@ -569,7 +576,7 @@ create_slow_blklist() {
   local map_file="$2"
   local rate_log="$3"
   local slow_blklist="$4" # Output file name
-  local slow_limit="${5:-5000000}" # Regions slower than this are selected
+  local slow_limit="${5:-1000000}" # Regions slower than this are selected
 
   # This only makes sense for drives, not for regular files.
   # Create a list of block addresses for rate log entires with eads slower
