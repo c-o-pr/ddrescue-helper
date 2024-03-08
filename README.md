@@ -65,7 +65,7 @@ Dealing with media errors is a drive, filesystem, and file data specific task, i
 
 # WARNINGS
 > [!CAUTION]
-> THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL ACCESS DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
+> THIS SCRIPT CAN IRRETREIVABLY DAMAGE DATA INCLUDING LOSS OF ALL DRIVE ACCESS DUE TO OVERWRITING CRITICAL FORMAT STRUCTURES. 
 >
 > __USE AT YOUR OWN RISK__
 
@@ -90,14 +90,17 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 #### 1. UNMOUNT, MOUNT, AND FSCK A DRIVE OR PARTITION.
 
-`ddrescue_helper.sh -m | -u | -f <device>`
+`ddrescue_helper.sh -u | -m | -f <device>`
  
-`-u, -m` include updating `/etc/fstab` (vifs on Mac) to prevent / restore auto-mount. This makes a device ready to be copied without interference from the auto-mount capabilities of the OS.
+`-u, -m` include updating `/etc/fstab` (using `vifs(8)` on macOS) to make devices ready to be copied without interference from the auto-mount capabilities of the OS. `-u` prevents auto-mount after unomount. `-m` re-enables auto-mount after mount. 
+
+`-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate to check / repair volume integiru after making a copy or zapping.
 
 > [!NOTE]
-> With `-m`, `<device>` can be a UUID to be removed from /etc/fstab. In certain use cases, an /etc/fstab entry can become orphaned. You also could just run `vifs(8)` and remove it by hand.
-
-`-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate after making a clone or zapping.
+> With `-m`, you can supply a volume UUID as `<device>`to remove an entry from /etc/fstab (no attemt to mount is made). An `/etc/fstab` entry can become orphaned if unmounted with `-u` after which the parition is reformatted or overwritten as a copy destination. You also can run `vifs` to do anything you want to `/etc/fstab` by hand.
+>
+> If you need a general purpose mount inhibitor for macOS, which works for all devices, includeing disk images, see [a Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
+> However, Disk Arbitrator hasn't been updated since 2017 and on macOS Ventura a bug prevents it its Quit from working, you have to kill it by hand.
 
 #### 2. SCAN, COPY
 
