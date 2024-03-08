@@ -12,6 +12,10 @@ $(basename "$0") Usage:
   -m | -u | -f <device>
     :: unmount / mount / fsck
 
+    With -m, <device> can be a UUID to be removed from /etc/fstab. 
+    In certain use cases, an /etc/fstab entry for a volume UUID can end
+    up orphaned. 
+    
   -c [ -X ] <label> <source> <destination>
     :: copy
 
@@ -185,6 +189,11 @@ absolute_path() {
         *)  echo "$(pwd)/$(basename $1)";;
     esac
   )
+}
+
+is_uuid() {
+  # Older bash treats " as part of pattern
+  [[ "$1" =~ ^[0-9A-F]+-[0-9A-F] ]]
 }
 
 ##########################
@@ -811,6 +820,24 @@ resource_matches_map() {
   fi
 }
 
+get_partition_uuid() {
+  local dev="$1"
+  # XXX Not used.
+  case $(get_OS) in
+    macOS)
+      diskutil info "$dev" | \
+        grep "Disk / Partition UUID:" | \
+        sed -E 's/^.+ ([-0-9A-F]+$)/\1/'
+      ;;
+    Linux)
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 get_volume_uuid() {
   local dev="$1"
 
@@ -1154,6 +1181,10 @@ list_partitions() {
       return 0
       ;;
     Linux)
+      # diskutil list
+      #lsblk -o NAME,FSTYPE,LABEL,MOUNTPOINTS,UUID "$device"
+      # diskutil info
+      #sudo blkid -o export --probe --info  "$device"
       return 1
       ;;
     *)
@@ -1166,17 +1197,106 @@ list_partitions() {
 # MOUNT, UNMOUNT & FSCK
 #######################
 
+add_to_fstab() {
+  case $(get_OS) in
+    macOS)
+      local volume_uuid="$1"
+      local fs_type="$2"
+      local volume_name="${3:-(name unspecified)}"
+      local device="${4:-(device unspecified)}"
+
+      if [ "$#" -lt 2 ]; then
+        # fstab entires must list the correct filesystem type or
+        # they won't be honored by the system.
+        error "add_to_fstab: error misssing parameters"
+        return 1
+      fi
+      if grep -q "^UUID=$volume_uuid" /etc/fstab; then
+        # XXX Add update of particulars
+        echo "add_to_fstab: $volume_uuid already exists"
+        return 0
+      fi
+
+      echo "add_to_fstab: $volume_uuid $volume_name"
+      # Juju with vifs to edit /etc/fstab
+      #
+      # G (got to end)
+      # A (append at end of line)
+      # :wq (write & quit
+      # THERE'S A NEEDED <ESC> CHARACTER EMBEDDED BEFORE :wq
+      #
+      # XXX Convert to ex(1)
+      EDITOR=vi
+      sudo vifs <<EOF1 > /dev/null 2>&1
+GA
+UUID=$volume_uuid none $fs_type rw,noauto # "$volume_name" $device:wq
+EOF1
+      if [ $? -ne 0 ]; then
+        error "add_to_fstab: vifs failed"
+        return 1
+      fi
+      return 0
+      ;;
+    Linux)
+      # get mount info and savein fstab
+      # sudo systemd-ummount device
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+remove_from_fstab() {
+  case $(get_OS) in
+    macOS)
+      local volume_uuid="$1"
+#      local volume_name="$2"
+#      local fs_type="$3"
+
+      if ! grep -q "^UUID=$volume_uuid" /etc/fstab; then
+        echo "remove_from_fstab: $volume_uuid not found"
+        return 0
+      fi
+      # Juju with vifs to edit /etc/fstab
+      # /<pattern> (go to line with pattern)
+      # dd (delete line)
+      # :wq (write & quit
+      echo "remove_from_fstab: $volume_uuid"      
+      EDITOR=vi
+      sudo vifs <<EOF2 > /dev/null 2>&1
+/^UUID=$volume_uuid
+dd:wq
+EOF2
+      if [ $? -ne 0 ]; then
+        error "remove_from_fstab: vifs failed"
+        return 1
+      fi
+      ;;
+    Linux)
+      # get mount info and savein fstab
+      # sudo systemd-ummount device
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 unmount_device() {
   local device="$1"
+  
+  # Unmount and disable auto-remoount of device
+  # If device is drive, do so for all its partitions
+  #
   local partitions
   local volume_uuid
   local volume_name
   local fs_type
   local result
-
-  # Unmount and disable auto-remoount of device
-  # If device is drive, do so for all its partitions
-
+  
   let result=0
   case $(get_OS) in
     macOS)
@@ -1185,45 +1305,24 @@ unmount_device() {
       local p
       local r
       partitions=( $(list_partitions "$device") )
-#      echo unmount_device 1: "$device" "$(strip_partition_id "$device")"
       echo "unmount_device: unmounting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
-        volume_uuid="$(get_volume_uuid $part)"
-        volume_name="$(get_volume_name $part)"
-        fs_type=$(get_fs_type "$part")
-        if ! grep -q "^UUID=$volume_uuid" /etc/fstab; then
-          echo "unmount_device: adding $volume_uuid $volume_name to /etc/fstab"
 
-          # Juju with vifs to edit /etc/fstab
-          #
-          # fstab entires must list the correct volume type or
-          # they won't be honored by the system.
-          #
-          # G (got to end)
-          # A (append at end of line)
-          # :wq (write & quit
-          # THERE'S A NEEDED <ESC> CHARACTER EMBEDDED BEFORE :wq
-          #
-          # XXX Convert to ex(1)
-          EDITOR=vi
-          let r=0
-          sudo vifs <<EOF1 > /dev/null 2>&1
-GA
-UUID=$volume_uuid none $fs_type rw,noauto # "$volume_name" $part:wq
-EOF1
-          if [ $? -ne 0 ]; then
-            echo "unmount_device: *** vifs failed"
-            return 1
-          fi
-        fi
-        if is_mounted "$part"; then
-          sudo diskutil umount "$part"
-          let result+=$?
-        else
-          echo "unmount_device: $part is not mounted"
-        fi
+        # If no volume UUID, there's no meaning to fstab entry.
+        # Volume likely read-only or not at all.
+        volume_uuid="$(get_volume_uuid $part)"
+        if [ -z "$volume_uuid" ]; then continue; fi
+
+        volume_name="$(get_volume_name $part)"
+        fs_type=$(get_fs_type "$part")        
+
+        add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
+        let result+=$?
+
+        sudo diskutil umount "$part"
+#        let result+=$?
       done
       echo "/etc/fstab:"
       cat /etc/fstab; echo
@@ -1242,45 +1341,34 @@ EOF1
 
 mount_device() {
   local device="$1"
+
+  # Enable automount and remount device
+  # If device is drive, do so for all its partitions
   local partitions
   local volume_uuid
   local volume_name
   local result
 
   let result=0
-  # Enable automount and remount device
-  # If device is drive, do so for all its partitions
   case $(get_OS) in
     macOS)
-      local p
-      local r
 #      echo "$device" "$(strip_partition_id "$device")"
       partitions=( $(list_partitions "$device") )
 #      echo ${partitions[@]}
       echo "mount_device: mounting ${partitions[@]}"
+      local p
+      local r
+      let r=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
+
         volume_uuid="$(get_volume_uuid $part)"
         volume_name="$(get_volume_name $part)"
-        if grep -q "^UUID=$volume_uuid" /etc/fstab; then
-          # Juju with vifs to edit /etc/fstab
-          # /<pattern> (go to line with pattern)
-          # dd (delete line)
-          # :wq (write & quit
-          echo "mount_device: removing $volume_uuid $volume_name from /etc/fstab"
-          EDITOR=vi
-          let r=0
-          sudo vifs <<EOF2 > /dev/null 2>&1
-/^UUID=$volume_uuid
-dd:wq
-EOF2
-#/^UUID=$volume_uuid.*${partitions[$p]}
 
-          let r+=$?
-          if [ $r -ne 0 ]; then echo "mount_device: *** vifs failed"; fi
-          let result+=$r
-        fi
+        remove_from_fstab "$volume_uuid" "$volume_name"
+        let result+=$?
+
         sudo diskutil mount "$part"
         let result+=$?
       done
@@ -1496,14 +1584,13 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   Device="$1"
 
-  if ! is_device "$Device" false; then
-    error "No such device $Device"
-    exit 1
-  fi
-
   if $Do_Unmount; then
     if $Do_Mount; then
-      error "unmount: Incompatible options (1c)"
+      error "unmount: Incompatible options (1a)"
+      exit 1
+    fi
+    if ! is_device "$Device" false; then
+      error "unmount: No such device $Device"
       exit 1
     fi
     echo "unmount: Disable automount..."
@@ -1511,28 +1598,45 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
       error "unmount: Unmount(s) failed"
       exit 1
     fi
+    exit 0
   fi
 
   if $Do_Mount; then
     if $Do_Unmount || $Do_Fsck; then
-      error "mount: Incompatible options (1-b)"
+      error "mount: Incompatible options (1b)"
+      exit 1
+    fi
+
+    # Various use-cases can leave an orphan UUID in /etc/fstab
+    # The user could remove it with vifs(8). 
+    # This just makes it simpler.
+    # Allow "UUID=" in string
+    if is_uuid "${Device/UUID=}"; then
+      # Just remove it from /etc/fstab
+      remove_from_fstab "${Device/UUID=}"
+      echo "/etc/fstab:"
+      cat /etc/fstab; echo
+      exit
+    fi
+    if ! is_device "$Device" false; then
+      error "mount: No such device $Device"
       exit 1
     fi
     echo "mount: Enable automount and mount..."
     if ! mount_device "$Device"; then
-      error "mount: Mount(s) failed"
+      error "mount: errors occurred"
       exit 1
     fi
+    exit 0
   fi
 
   if $Do_Fsck; then
     if $Do_Mount; then
-      error "fsck: Incompatible options (1-d)"
+      error "fsck: Incompatible options (1c)"
       exit 1
     fi
     fsck_device "$Device" false
   fi
-
   exit 0
 fi
 

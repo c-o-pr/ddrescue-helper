@@ -75,8 +75,7 @@ THE WISE DATA HOARDER WILL HAVE BACKUPS AND SIMPLY REPLACE A PROBLEM DRIVE.
 
 The frugal or bereft may want to work with janky devices at hand.
 
-Making a terrible mistake is possible, but the skilled may be rewarded
-
+Making a terrible mistake is possible, but the skilled may be rewarded.
 
 > [!IMPORTANT]
 > IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
@@ -121,7 +120,7 @@ Runs `ddrescue` to scan a device or recover data, generating a map of read error
 
 For copy `-X` is implied to recover as much data as possible.
   
-#### 3 PRINT AFFECTED FILES AND ZAP BLOCKS
+#### 3 PRINT AFFECTED FILES (HFS+) AND ZAP BLOCKS
 
 These functions utilize the `ddrescue` block map data resulting from copy / scan.
 
