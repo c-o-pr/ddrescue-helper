@@ -94,6 +94,9 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
  
 `-u, -m` include updating `/etc/fstab` (vifs on Mac) to prevent / restore auto-mount. This makes a device ready to be copied without interference from the auto-mount capabilities of the OS.
 
+> [!NOTE]
+> With `-m`, `<device>` can be a UUID to be removed from /etc/fstab. In certain use cases, an /etc/fstab entry can become orphaned. You also could just run `vifs(8)` and remove it by hand.
+
 `-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate after making a clone or zapping.
 
 #### 2. SCAN, COPY
