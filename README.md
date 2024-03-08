@@ -88,7 +88,7 @@ Making a terrible mistake is possible, but the skilled may be rewarded.
 
 There are THREE MODES of `ddrescue-helper.sh` operation:
 
-#### 1. UNMOUNT, MOUNT, AND FSCK A DRIVE OR PARTITION.
+### 1. UNMOUNT, MOUNT, AND FSCK A DRIVE OR PARTITION.
 
 `ddrescue_helper.sh -u | -m | -f <device>`
  
@@ -99,10 +99,10 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 > [!NOTE]
 > With `-m`, you can supply a volume UUID as `<device>`to remove an entry from /etc/fstab (no attemt to mount is made). An `/etc/fstab` entry can become orphaned if unmounted with `-u` after which the parition is reformatted or overwritten as a copy destination. You also can run `vifs` to do anything you want to `/etc/fstab` by hand.
 >
-> If you need a general purpose mount inhibitor for macOS, which works for all devices, includeing disk images, see [a Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
+> If you need a general purpose mount inhibitor for macOS, which works for all devices, includeing disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
 > However, Disk Arbitrator hasn't been updated since 2017 and on macOS Ventura a bug prevents it its Quit from working, you have to kill it by hand.
 
-#### 2. SCAN, COPY
+### 2. SCAN, COPY
 
 Runs `ddrescue` to scan a device or recover data, generating a map of read errors and a rate log which records device regions that experienced read slowdown. The map and rate log are stored in a folder named <label>
 
@@ -126,7 +126,7 @@ Runs `ddrescue` to scan a device or recover data, generating a map of read error
 
 For copy `-X` is implied to recover as much data as possible.
   
-#### 3 PRINT AFFECTED FILES (HFS+) AND ZAP BLOCKS
+### 3 PRINT AFFECTED FILES (HFS+) AND ZAP BLOCKS
 
 These functions utilize the `ddrescue` block map data resulting from copy / scan.
 
