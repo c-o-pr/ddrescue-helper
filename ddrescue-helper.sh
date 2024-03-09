@@ -294,10 +294,10 @@ zap_from_mapfile() {
   local block count total_blocks=0
   if $preview; then
     echo "zap_from_mapfile: PREVIEW"
-    echo "zap_from_mapfile: DEVICE BLOCK COUNT (hex)"
   fi
+  echo "zap_from_mapfile: DEVICE BLOCK COUNT (hex)"
   cat "$zap_blocklist" | \
-  ( \
+  { \
     while read block count; do
       if [ -z "$block" ] || [ $block -eq 0 ] || \
          [ -z "$count" ] || [ $count -gt 500 ]; then
@@ -306,14 +306,14 @@ zap_from_mapfile() {
       fi
       let total_blocks+=$count
       if $preview; then
-        printf "$device %d %d (0x%X 0x%04X)\n" \
+        printf "$device %12d %-4d %#12x %#5.3x\n" \
           "$block" "$count" "$block" "$count"
       else
         zap_sequence "$device" "$block" "$count"
       fi
     done
     echo "zap_from_mapfile: done, total $total_blocks blocks"
-  )
+  }
 
   return 0
 }
