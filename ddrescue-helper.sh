@@ -190,10 +190,10 @@ absolute_path() {
   (
     if [ -z "$1" ]; then return 1; fi
     if ! cd "$(dirname "$1")"; then return 1; fi
-    case $(basename $1) in
+    case "$(basename $1)" in
         ..) echo "$(dirname $(pwd))";;
         .)  echo "$(pwd)";;
-        *)  echo "$(pwd)/$(basename $1)";;
+        *)  echo "$(pwd)/$(basename "$1")";;
     esac
   )
 }
@@ -631,7 +631,7 @@ make_ddrescue_helper() {
   # XXX PASS SIGNAL TO SCAN SCRIPT
   local helper_script="${1:-ddrescue.sh}"
 
-  if ! which ddrescue; then
+  if ! which ddrescue > /dev/null; then
     echo "make_ddrescue_helper: ddrescue not found on PATH"
     return 1
   fi
@@ -1704,7 +1704,7 @@ if $Do_Copy; then
     exit 1
   fi
 
-  if ! which xddrescue; then
+  if ! which ddrescue; then
     error "ddrescue(1) not found on PATH"
     error 
     error "You can obtain ddrescue using homebrew or macports"
