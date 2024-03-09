@@ -460,12 +460,12 @@ parse_ddrescue_map_for_fsck() {
   # and emit a list of corresponding blocks.
   #
   # The map file is a list of byte addresses.
-  # EXTS just for debugging the calculation.
+  # EXTENTS just for debugging the calculation.
   local block count
   grep -v '^#' "$map_file" | \
   grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
   grep -e - -e / -e '*' | \
-  ddrescue_map_bytes_to_blocks | tee "$fsck_blocklist.EXTS" | \
+  ddrescue_map_bytes_to_blocks | tee "${fsck_blocklist}-EXTENTS" | \
   sort -n | \
   while IFS=" " read block count; do
     let block=$block-$partition_offset
@@ -499,10 +499,10 @@ parse_rate_log_for_fsck() {
     fi
   done | \
   # The compendium of logs may duplicate slow regions so filter dups out
-  # EXTS just for debugging the calculation
+  # EXTENTS just for debugging the calculation
   uniq | \
   sort -n | \
-  ddrescue_map_bytes_to_blocks | tee "$slow_blocklist.EXTS" | \
+  ddrescue_map_bytes_to_blocks | tee "${slow_blocklist}-EXTENTS" | \
   while read block count; do
     let block=$block-$partition_offset
     if [ -z "$block" ] || [ $block -eq 0 ] || \
@@ -1701,9 +1701,9 @@ if $Do_Copy; then
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
   Map_File="$Label.map"
-  Error_Fsck_Blklist="$Label.fsck-blocklist"
-  Zap_Blklist="$Label.zap-blocklist"
-  Smart_Blklist="$Label.smart-blocklist"
+  Error_Fsck_Block_List="$Label.fsck-blocklist"
+  Zap_Block_List="$Label.zap-blocklist"
+  Smart_Block_List="$Label.smart-blocklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log"
   Files_Log="$Label.files-log"
@@ -1834,12 +1834,10 @@ if $Do_Copy; then
          [ ! -s "$Copy_Dest" ]; then
         error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
         exit 1
-      else
-        # XXX Fair assumption
-        # XXX Could compare the first two blocks of source / dest to verify
-        continuing=true;
       fi
-      # Contimue
+      # XXX Fair assumption
+      # XXX Could compare the first N blocks of source / dest to verify
+      continuing=true
     else
       error "copy: Existing block map ($Label) not for this destination"
       get_commandline_from_map "$Map_File"
@@ -1922,15 +1920,14 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
   Map_File="$Label.map"
-  Error_Fsck_Blklist="$Label.error-blocklist"
-  Slow_Fsck_Blklist="$Label.slow-blocklist"
-  Zap_Blklist="$Label.zap-blocklist"
-  Smart_Blklist="$Label.smart-blocklist"
-  Slow_Blklist="$Label.slow-blocklist"
+  Error_Fsck_Block_List="$Label.blocklist-error"
+  Slow_Fsck_Block_List="$Label.blocklist-slow"
+  Zap_Block_List="$Label.blocklist-zap"
+  Smart_Block_List="$Label.blocklist-smart"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log" # Incremeted if exists
-  Error_Files_Report="$Label.ERROR-FILES-REPORT"
-  Slow_Files_Report="$Label.SLOW-FILES-REPORT"
+  Error_Files_Report="$Label.FILES-REPORT-ERROR"
+  Slow_Files_Report="$Label.FILES-REPORT-SLOW"
 
   if ! cd "$Label" > /dev/null 2>&1; then
     error "No metadata found ($Label)"; exit 1;
@@ -1997,17 +1994,17 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     fi
 
     if $Do_Error_Files_Report; then
-      create_ddrescue_error_blocklist "$Device" "$Map_File" "$Error_Fsck_Blklist"
-#      cat "$Error_Fsck_Blklist"
+      create_ddrescue_error_blocklist "$Device" "$Map_File" "$Error_Fsck_Block_List"
+#      cat "$Error_Fsck_Block_List"
 
-      fsck_device "$Device" true "$Error_Fsck_Blklist" | \
+      fsck_device "$Device" true "$Error_Fsck_Block_List" | \
         tee "$Error_Files_Report"
       echo "report: files affected by errors: $Label/$Error_Files_Report"
     elif $Do_Slow_Files_Report; then
-      create_slow_blocklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Blklist"
-#      cat "$Slow_Fsck_Blklist"
+      create_slow_blocklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Block_List"
+#      cat "$Slow_Fsck_Block_List"
 
-      fsck_device "$Device" true "$Slow_Fsck_Blklist" | \
+      fsck_device "$Device" true "$Slow_Fsck_Block_List" | \
         tee "$Slow_Files_Report"
       echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
     else
@@ -2037,7 +2034,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     fi
 
     zap_from_mapfile "$Device" "$Map_File" \
-                     "$Zap_Blklist" $Preview_Zap_Regions
+                     "$Zap_Block_List" $Preview_Zap_Regions
   fi
 
 fi
