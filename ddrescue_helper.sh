@@ -221,7 +221,7 @@ write_block() {
   local block="$2"
 
 #  echo sudo hdparm --yes-i-know-what-i-am-doing --write-sector "$2" "$1"
-  sudo dd bs=512 count=1 if=/dev/zero of="$target" \
+  sudo dd bs=512 count=1 if=/dev/random of="$target" \
     oseek="$block" oflag=sync,direct conv=notrunc
 }
 
@@ -229,27 +229,29 @@ zap_sequence() {
   local target="$1"
   local block="$2"
   local count="$3"
+  
   local res
   local max
   local c
-
+  local t
   let max=3
   let c=1
-  printf "zap_sequence: Processing $target 0x%X %d:\n" "$block" "$count"
+  printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
   while [ "$c" -le "$count" ]; do
-    echo -n "$block read "
-    let t=$( date +%s )+1
+    printf "%d (0x%X) read " "$block" "$block"
+#    echo -n "$block read "
+    let t=$(date +%s)+2
     read_block "$target" "$block" > /dev/null 2>&1
     let res=$?
-    let t2=$( date +%s )
+    let t2=$(date +%s)
 #    echo $t $t2
-    if [ $res -ne 0 ] || [ $t -le $t2 ]; then
-      echo -n "write "
+    if [ $res -ne 0 ] || [ $t -lt $t2 ]; then
+      echo -n "FAILED ($res), write "
       write_block "$target" "$block"  > /dev/null 2>&1
       let res=$?
       if [ "$res" -ne 0 ] ; then
         echo "FAILED"
-        sleep 0.2
+        sleep 0.1
       else
         echo -n "re-read "
         if ! read_block "$target" "$block" > /dev/null 2>&1; then
@@ -266,51 +268,59 @@ zap_sequence() {
     let c+=1
     echo
   done
-  echo "done"
+  echo "sequence done, $count"
 }
 
 zap_from_mapfile() {
   local device="$1"
   local map_file="$2"
-  local zap_blklist="$3" # side-effect
+  local zap_blocklist="$3" # side-effect
   local preview="${4:-true}"
   
-  echo "$zap_blklist"
+  echo "$zap_blocklist"
 
   grep -v "^#" "$map_file" | \
   grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
   grep -e - -e / -e '*' | \
   ddrescue_map_bytes_to_blocks 512 \
-  sort -n >| "$zap_blklist"
+  sort -n >| "$zap_blocklist"
 
-  if [ ! -s "$zap_blklist" ]; then
+  if [ ! -s "$zap_blocklist" ]; then
     echo "zap_from_mapfile: Missing or empty bad-block list"
     return 1
   fi
-  if grep '[^0-9 ]' "$zap_blklist"; then
+  if grep '[^0-9 ]' "$zap_blocklist"; then
     echo "zap_from_mapfile: Bad-block list should be a list of numbers"
     return 1
   fi
 
-  local total_blks
-  let total_blks=0
+  local block
+  local count
+  local total_blocks
+  let total_blocks=0
   if $preview; then
     echo "zap_from_mapfile: PREVIEW"
-    echo "zap_from_mapfile: DEVICE BLOCK COUNT"
+    echo "zap_from_mapfile: DEVICE BLOCK COUNT (hex)"
   fi
-  cat "$zap_blklist" | ( while read blk cnt; do
-    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-       [ "$cnt" == "" ] || [ "$cnt" -gt 500 ]; then
+  cat "$zap_blocklist" | \
+  ( \
+  while read block count; do
+    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
+       [ "$count" == "" ] || [ "$count" -gt 500 ]; then
       echo "zap_from_mapfile: Bad block list: address is 0 or count > 500"
       return 1
     fi
-    let total_blks+=$cnt
+    let total_blocks+=$count
     if $preview; then
-      printf "$device 0x%X 0x%04X (%d)\n" "$blk" "$cnt" "$cnt"
+      printf "$device %d %d (0x%X 0x%04X)\n" "$block" "$count" "$block" "$count"
     else
-      zap_sequence "$device" "$blk" "$cnt"
+      zap_sequence "$device" "$block" "$count"
     fi
-  done; if $preview; then echo "zap_from_mapfile: ZAP TOTAL = $total_blks"; fi )
+  done;
+  if $preview; then echo "zap_from_mapfile: ZAP TOTAL = $total_blocks"; fi
+  echo "zap_from_mapfile: done, total $total_blocks" 
+  )
+  
   return 0
 }
 
@@ -338,7 +348,7 @@ start_smart_selftest() {
 
 smart_scan_drive() {
   local drive="$1"
-  local smart_blklist="$2" # side-effect
+  local smart_blocklist="$2" # side-effect
 
 # XXX EXPERIMENTAL
 # XXX THIS APPROACH DIDN'T WORK OUT DUE TO LIMITATIONS
@@ -372,7 +382,7 @@ smart_scan_drive() {
     #
     if [ "$fixed_count" -eq "$x" ]; then finished=true; continue; fi
 
-    create_smartctl_error_blklist "$drive" "$smart_blklist"
+    create_smartctl_error_blocklist "$drive" "$smart_blocklist"
 
 #   zap_from_smart "$drive"
 
@@ -386,8 +396,8 @@ smart_scan_drive() {
 # FUNCTIONS FOR BLOCK LISTS FOR REPORTS AND ZAP
 ###############################################
 
-sanity_check_blklist() {
-  local blklist="$1"
+sanity_check_blocklist() {
+  local blocklist="$1"
   local device="$2"
 
   # XXX NOT YET USED
@@ -425,7 +435,7 @@ sanity_check_blklist() {
 }
 
 ddrescue_map_bytes_to_blocks() {
-  local blksize="${1:-512}"
+  local blocksize="${1:-512}"
 
   # Convert hex map data for byte addresses and extents
   # into decimal blocks.
@@ -439,8 +449,8 @@ ddrescue_map_bytes_to_blocks() {
   local addr
   local len
   while read addr len x; do
-    addr=$(( addr / blksize ))
-    len=$(( len / blksize ))
+    addr=$(( addr / blocksize ))
+    len=$(( len / blocksize ))
     # Edge case
     if  (( addr == 0 || len == 0 )); then continue; fi
     # decimal
@@ -450,7 +460,7 @@ ddrescue_map_bytes_to_blocks() {
 
 parse_ddrescue_map_for_fsck() {
   local map_file="$1"
-  local fsck_blklist="$2" # side-effect
+  local fsck_blocklist="$2" # side-effect
 
   # Pull a list of error extents from the map
   # convert them from byte to block addresses
@@ -458,26 +468,26 @@ parse_ddrescue_map_for_fsck() {
   #
   # The map file is a list of byte addresses.
   # EXTS just for debugging the calculation.
-  local blk
-  local cnt
+  local block
+  local count
   grep -v '^#' "$map_file" | \
   grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
   grep -e - -e / -e '*' | \
-  ddrescue_map_bytes_to_blocks | tee "$fsck_blklist.EXTS" | \
+  ddrescue_map_bytes_to_blocks | tee "$fsck_blocklist.EXTS" | \
   sort -n | \
-  while IFS=" " read blk cnt; do
-    let blk=$blk-$partition_offset
-    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
-    for (( i = 0; i < cnt; i++ )); do
-      echo $(( blk + i ))
+  while IFS=" " read block count; do
+    let block=$block-$partition_offset
+    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
+       [ "$count" == "" ] || [ "$count" -eq 0 ]; then break; fi
+    for (( i = 0; i < count; i++ )); do
+      echo $(( block + i ))
     done
   done 
 }
 
 parse_rate_log_for_fsck() {
   local rate_log="$1"
-  local slow_blklist="$2" # Output file name
+  local slow_blocklist="$2" # Output file name
   local slow_limit="$3" # Regions slower than this are selected
 
   local n
@@ -487,8 +497,8 @@ parse_rate_log_for_fsck() {
   local bad_areas
   local bad_size
   local interval
-  local blk
-  local cnt
+  local block
+  local count
   grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
   while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
     # Log entires are issued once per second Compute a sparse list of blocks
@@ -508,22 +518,22 @@ parse_rate_log_for_fsck() {
   # EXTS just for debugging the calculation
   uniq | \
   sort -n | \
-  ddrescue_map_bytes_to_blocks | tee "$slow_blklist.EXTS" | \
-  while read blk cnt; do
-    let blk=$blk-$partition_offset
-    if [ "$blk" == "" ] || [ "$blk" -eq 0 ] || \
-       [ "$cnt" == "" ] || [ "$cnt" -eq 0 ]; then break; fi
-    for (( i = 0; i < cnt; i++ )); do
-      echo $(( blk + i ))
+  ddrescue_map_bytes_to_blocks | tee "$slow_blocklist.EXTS" | \
+  while read block count; do
+    let block=$block-$partition_offset
+    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
+       [ "$count" == "" ] || [ "$count" -eq 0 ]; then break; fi
+    for (( i = 0; i < count; i++ )); do
+      echo $(( block + i ))
     done
-  done >| "$slow_blklist"
+  done >| "$slow_blocklist"
 }
 
-create_ddrescue_error_blklist() {
+create_ddrescue_error_blocklist() {
   local device="$1"
   local map_file="$2"
-  local fsck_blklist="$3" # side-effect
-  local blksize="${4:-512}"
+  local fsck_blocklist="$3" # side-effect
+  local blocksize="${4:-512}"
 
   # Translate a map file into a list of blocks that can be
   # used with fsck -B to list files.
@@ -546,36 +556,36 @@ create_ddrescue_error_blklist() {
     # Assume the map is for a drive, so compute offset.
     partition_offset=$(get_partition_offset "$device")
   fi
-  echo "ERROR BLOCKLIST: $fsck_blklist"
-  parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blklist" >| "$fsck_blklist"
+  echo "ERROR BLOCKLIST: $fsck_blocklist"
+  parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blocklist" >| "$fsck_blocklist"
   
-  if [ ! -s "$fsck_blklist" ]; then
-    echo "create_ddrescue_error_blklist: NO ERROR BLOCKS"
+  if [ ! -s "$fsck_blocklist" ]; then
+    echo "create_ddrescue_error_blocklist: NO ERROR BLOCKS"
     exit 0
   fi
 }
 
-create_smartctl_error_blklist() {
+create_smartctl_error_blocklist() {
   local device="$1"
-  local smart_blklist="$2" # Output file name
+  local smart_blocklist="$2" # Output file name
 
   echo "Creating a UNIQUE bad block list from smartcrl event log"
   # Only errors may include repeated blocks, eliminate dups
   sudo smartctl -l selftest "$device" | \
     grep "#" | sed 's/.* //' | grep -v -- "-" | \
-    uniq | sort -n > "$smart_blklist"
+    uniq | sort -n > "$smart_blocklist"
 
-  if [ ! -s "$fsck_blklist" ]; then
-    echo "create_smartctl_error_blklist: NO ERROR BLOCKS"
+  if [ ! -s "$fsck_blocklist" ]; then
+    echo "create_smartctl_error_blocklist: NO ERROR BLOCKS"
     exit 0
   fi
 }
 
-create_slow_blklist() {
+create_slow_blocklist() {
   local device="$1"
   local map_file="$2"
   local rate_log="$3"
-  local slow_blklist="$4" # Output file name
+  local slow_blocklist="$4" # Output file name
   local slow_limit="${5:-1000000}" # Regions slower than this are selected
 
   # This only makes sense for drives, not for regular files.
@@ -602,11 +612,11 @@ create_slow_blklist() {
   fi
 
   echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_limit"
-  parse_rate_log_for_fsck "$rate_log" "$slow_blklist" "$slow_limit" >> \ 
-    "$slow_blklist"
+  parse_rate_log_for_fsck "$rate_log" "$slow_blocklist" "$slow_limit" >> \ 
+    "$slow_blocklist"
 
-  if [ ! -s "$slow_blklist" ]; then
-    echo "create_slow_blklist: NO SLOW BLOCKS"
+  if [ ! -s "$slow_blocklist" ]; then
+    echo "create_slow_blocklist: NO SLOW BLOCKS"
     exit 0
   fi
 }
@@ -1398,7 +1408,7 @@ mount_device() {
 fsck_device() {
   local device="$1"
   local find_files="${2:-false}"
-  local blklist="$3"
+  local blocklist="$3"
 
   # Enable automount and remount device
   # If device is drive, do so for all its partitions
@@ -1409,7 +1419,7 @@ fsck_device() {
   local fs_type
   let result=0
 
-  if $find_files && [ "$blklist" == "" -o ! -f "$blklist" ]; then 
+  if $find_files && [ "$blocklist" == "" -o ! -f "$blocklist" ]; then 
     echo "fsck_device; missing block list for find files"
     return 1
   fi
@@ -1433,8 +1443,8 @@ fsck_device() {
               sudo fsck_hfs -f -y "$part"
             else
               # On macOS -l "lock" must be used when mounted write
-#              cat $blklist
-              sudo fsck_hfs -n -l -B "$blklist" "$device"
+#              cat $blocklist
+              sudo fsck_hfs -n -l -B "$blocklist" "$device"
             fi
             let result+=$?
             let nr_checked+=1
@@ -1677,7 +1687,7 @@ if $Do_Smart_Scan; then
   #
   echo "smartscan: Deprecated, doesn't work"
   # Verify device is a drive not a partition
-#    smart_scan_drive "$device" "$smart_blklist"
+#    smart_scan_drive "$device" "$smart_blocklist"
 
   exit 1
 fi
@@ -1721,9 +1731,9 @@ if $Do_Copy; then
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
   Map_File="$Label.map"
-  Error_Fsck_Blklist="$Label.fsck-blklist"
-  Zap_Blklist="$Label.zap-blklist"
-  Smart_Blklist="$Label.smart-blklist"
+  Error_Fsck_Blklist="$Label.fsck-blocklist"
+  Zap_Blklist="$Label.zap-blocklist"
+  Smart_Blklist="$Label.smart-blocklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log"
   Files_Log="$Label.files-log"
@@ -1941,11 +1951,11 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   # File names used to hold the ddrewscue map file and block lists for
   # print and zap.
   Map_File="$Label.map"
-  Error_Fsck_Blklist="$Label.error-blklist"
-  Slow_Fsck_Blklist="$Label.slow-blklist"
-  Zap_Blklist="$Label.zap-blklist"
-  Smart_Blklist="$Label.smart-blklist"
-  Slow_Blklist="$Label.slow-blklist"
+  Error_Fsck_Blklist="$Label.error-blocklist"
+  Slow_Fsck_Blklist="$Label.slow-blocklist"
+  Zap_Blklist="$Label.zap-blocklist"
+  Smart_Blklist="$Label.smart-blocklist"
+  Slow_Blklist="$Label.slow-blocklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log" # Incremeted if exists
   Error_Files_Report="$Label.ERROR-FILES-REPORT"
@@ -2016,19 +2026,19 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     fi
 
     if $Do_Error_Files_Report; then
-      create_ddrescue_error_blklist "$Device" "$Map_File" "$Error_Fsck_Blklist"
+      create_ddrescue_error_blocklist "$Device" "$Map_File" "$Error_Fsck_Blklist"
 #      cat "$Error_Fsck_Blklist"
 
       fsck_device "$Device" true "$Error_Fsck_Blklist" | \
         tee "$Error_Files_Report"
-      echo "report: Error-affected files report: $Label/$Error_Files_Report"
+      echo "report: files affected by errors: $Label/$Error_Files_Report"
     elif $Do_Slow_Files_Report; then
-      create_slow_blklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Blklist"
+      create_slow_blocklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Blklist"
 #      cat "$Slow_Fsck_Blklist"
 
       fsck_device "$Device" true "$Slow_Fsck_Blklist" | \
         tee "$Slow_Files_Report"
-      echo "report: Slow-affected files report: $Label/$Slow_Files_Report"
+      echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
     else
       error "report: MAINLINE GLITCH, SHOULD NOT HAPPEN"
     fi
