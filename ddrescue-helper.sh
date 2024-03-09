@@ -1,5 +1,4 @@
 #!/bin/bash
-#/bin/bash --version
 
 usage() {
   cat << USAGE
@@ -12,10 +11,10 @@ $(basename "$0") Usage:
   -m | -u | -f <device>
     :: unmount / mount / fsck
 
-    With -m, <device> can be a UUID to be removed from /etc/fstab. 
+    With -m, <device> can be a UUID to be removed from /etc/fstab.
     In certain use cases, an /etc/fstab entry for a volume UUID can end
-    up orphaned. 
-    
+    up orphaned.
+
   -c [ -X ] <label> <source> <destination>
     :: copy
 
@@ -58,9 +57,9 @@ $(basename "$0") Usage:
 
   -u Unmount <device> partition(s) and prevent auto-moounting.
      The GPT EFI partition is not included as it is not normally auto-mounted.
-     If device is a drive, all its partitions are unmouonted including 
+     If device is a drive, all its partitions are unmouonted including
      APFS containers.
-     
+
   -m Undo autmount prevention and remount drive or partition on <device>.
 
   -f Fsck. Check and repair partitions (HFS+).
@@ -86,7 +85,7 @@ $(basename "$0") Usage:
      Copy implies unmount (-u) <source> and <destination>.
      Mounting (-m) after copy must be performed explicitly.
 
-     The metadata created by any -c for drvies and partitions 
+     The metadata created by any -c for drvies and partitions
      can be used by -p -s -z and -Z. When the source is a file, it may be
      interesting to know which blocks are affected by these are logical blocks
      within the file, not device blocks.
@@ -94,12 +93,12 @@ $(basename "$0") Usage:
      By default -c when <destination> is /dev/null (scan) doesn't scrape
      to avoid waiting for additional reads in likely bad areas that aren't
      likely to change afftect files reporting. Enable scan scrape with -X.
-     
+
      The boot drive cannot used (altoough maybe it should be allowed for scan).
 
   -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
 
-  -p Report for HFS+ partition of files affected by error regions 
+  -p Report for HFS+ partition of files affected by error regions
      listed in the ddrescue map for <label>. Affected files can be
      restored from backup or rescued individually using this helper.
 
@@ -120,7 +119,7 @@ $(basename "$0") Usage:
   -z Print a preview of error blocks to be zapped, allowing you to sanity check
      the implications before actually zapping with -Z. For example, if you
      have errors in the first 40 512-byte blocks for a GPT drive, you will
-     overwrite the drive's partition table, so make a copy of 
+     overwrite the drive's partition table, so make a copy of
      the backup partition table first (beyond the scope of this help).
 
   -Z Zap blocks listed as errors in an existing block map.
@@ -129,7 +128,7 @@ $(basename "$0") Usage:
 
     Map data from an unfinished copy or scan can be used with -p -s -z -Z,
     assuming any bad blocks or slow areas have been recorded.
-    
+
   REQUIRES
     Bash V3+
     GNU ddrescue: [ macports | brew ] install ddrescue
@@ -164,7 +163,8 @@ trap _abort SIGINT SIGTERM
 #trap _suspend SIGTSTP
 
 error() {
-  echo "*** $1" >&2
+  echo -n "***"
+  echo "$@" >&2
 }
 
 get_OS() {
@@ -229,27 +229,24 @@ zap_sequence() {
   local target="$1"
   local block="$2"
   local count="$3"
-  
-  local res
-  local max
-  local c
-  local t
-  let max=3
-  let c=1
+
+  local result t
+  local max=3
+  local c=1
   printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
   while [ "$c" -le "$count" ]; do
     printf "%d (0x%X) read " "$block" "$block"
 #    echo -n "$block read "
     let t=$(date +%s)+2
     read_block "$target" "$block" > /dev/null 2>&1
-    let res=$?
-    let t2=$(date +%s)
+    result=$?
+    t2=$(date +%s)
 #    echo $t $t2
-    if [ $res -ne 0 ] || [ $t -lt $t2 ]; then
-      echo -n "FAILED ($res), write "
+    if [ $result -ne 0 ] || [ $t -lt $t2 ]; then
+      echo -n "FAILED ($result), write "
       write_block "$target" "$block"  > /dev/null 2>&1
-      let res=$?
-      if [ "$res" -ne 0 ] ; then
+      result=$?
+      if [ "$result" -ne 0 ] ; then
         echo "FAILED"
         sleep 0.1
       else
@@ -268,7 +265,7 @@ zap_sequence() {
     let c+=1
     echo
   done
-  echo "sequence done, $count"
+  echo "zap_sequence: done, $count blocks"
 }
 
 zap_from_mapfile() {
@@ -276,7 +273,7 @@ zap_from_mapfile() {
   local map_file="$2"
   local zap_blocklist="$3" # side-effect
   local preview="${4:-true}"
-  
+
   echo "$zap_blocklist"
 
   grep -v "^#" "$map_file" | \
@@ -294,33 +291,30 @@ zap_from_mapfile() {
     return 1
   fi
 
-  local block
-  local count
-  local total_blocks
-  let total_blocks=0
+  local block count total_blocks=0
   if $preview; then
     echo "zap_from_mapfile: PREVIEW"
     echo "zap_from_mapfile: DEVICE BLOCK COUNT (hex)"
   fi
   cat "$zap_blocklist" | \
   ( \
-  while read block count; do
-    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
-       [ "$count" == "" ] || [ "$count" -gt 500 ]; then
-      echo "zap_from_mapfile: Bad block list: address is 0 or count > 500"
-      return 1
-    fi
-    let total_blocks+=$count
-    if $preview; then
-      printf "$device %d %d (0x%X 0x%04X)\n" "$block" "$count" "$block" "$count"
-    else
-      zap_sequence "$device" "$block" "$count"
-    fi
-  done;
-  if $preview; then echo "zap_from_mapfile: ZAP TOTAL = $total_blocks"; fi
-  echo "zap_from_mapfile: done, total $total_blocks" 
+    while read block count; do
+      if [ -z "$block" ] || [ $block -eq 0 ] || \
+         [ -z "$count" ] || [ $count -gt 500 ]; then
+        echo "zap_from_mapfile: Bad block list: address is 0 or count > 500"
+        return 1
+      fi
+      let total_blocks+=$count
+      if $preview; then
+        printf "$device %d %d (0x%X 0x%04X)\n" \
+          "$block" "$count" "$block" "$count"
+      else
+        zap_sequence "$device" "$block" "$count"
+      fi
+    done
+    echo "zap_from_mapfile: done, total $total_blocks blocks"
   )
-  
+
   return 0
 }
 
@@ -356,13 +350,13 @@ smart_scan_drive() {
 
   # Zaps on the fly to get SMART test to move ahead
 
-  if [ "$drive" == "" ]; then exit 1; fi
+  if [ -z "$drive" ]; then exit 1; fi
 
   start_smart_selftest "$drive"
 
   # Fixed count
-  let fixed_count=0
-  finished=false
+  local fixed_count=0
+  local finished=false
   while [ $finished == false ]; do
 
     while sudo smartctl -a "$drive" | grep -i -C 3 "in progress"; do
@@ -370,7 +364,7 @@ smart_scan_drive() {
 #      echo WAITING
     done
 
-    let x=$(sudo smartctl -a "$drive" | grep "^#" | \
+    local x=$(sudo smartctl -a "$drive" | grep "^#" | \
                sed -e 's/\# *//' -e 's/  .*//' | tail -1)
 
     echo "log events $x, handled $fixed_count"
@@ -380,7 +374,7 @@ smart_scan_drive() {
     # When no more errors are listed since last test, work is done
     # Otherwise restart the test
     #
-    if [ "$fixed_count" -eq "$x" ]; then finished=true; continue; fi
+    if [ $fixed_count -eq $x ]; then finished=true; continue; fi
 
     create_smartctl_error_blocklist "$drive" "$smart_blocklist"
 
@@ -388,7 +382,7 @@ smart_scan_drive() {
 
     start_smart_selftest "$drive"
 
-    let fixed_count=$x
+    fixed_count=$x
   done
 }
 
@@ -446,8 +440,7 @@ ddrescue_map_bytes_to_blocks() {
   #   4      1
   # 0 or 0 are skipped.
   #
-  local addr
-  local len
+  local addr len
   while read addr len x; do
     addr=$(( addr / blocksize ))
     len=$(( len / blocksize ))
@@ -468,8 +461,7 @@ parse_ddrescue_map_for_fsck() {
   #
   # The map file is a list of byte addresses.
   # EXTS just for debugging the calculation.
-  local block
-  local count
+  local block count
   grep -v '^#' "$map_file" | \
   grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
   grep -e - -e / -e '*' | \
@@ -477,12 +469,12 @@ parse_ddrescue_map_for_fsck() {
   sort -n | \
   while IFS=" " read block count; do
     let block=$block-$partition_offset
-    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
-       [ "$count" == "" ] || [ "$count" -eq 0 ]; then break; fi
+    if [ -z "$block" ] || [ $block -eq 0 ] || \
+       [ -z "$count" ] || [ $count -eq 0 ]; then break; fi
     for (( i = 0; i < count; i++ )); do
       echo $(( block + i ))
     done
-  done 
+  done
 }
 
 parse_rate_log_for_fsck() {
@@ -490,15 +482,7 @@ parse_rate_log_for_fsck() {
   local slow_blocklist="$2" # Output file name
   local slow_limit="$3" # Regions slower than this are selected
 
-  local n
-  local addr
-  local rate
-  local ave_rate
-  local bad_areas
-  local bad_size
-  local interval
-  local block
-  local count
+  local n addr rate ave_rate bad_areas bad_size interval block count
   grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
   while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
     # Log entires are issued once per second Compute a sparse list of blocks
@@ -506,7 +490,7 @@ parse_rate_log_for_fsck() {
     # evenly spaced intervals. Advanced Format drives are fundamentally 4096
     # byte formats, so place samples on mod 4096 byte intervals
     # Interger div rounds down.
-    # 
+    #
     if (( rate < "$slow_limit" )); then
       interval=$(( rate / 50 / 4096 ))
       for (( i=0; i<=interval; i++ )); do
@@ -521,8 +505,8 @@ parse_rate_log_for_fsck() {
   ddrescue_map_bytes_to_blocks | tee "$slow_blocklist.EXTS" | \
   while read block count; do
     let block=$block-$partition_offset
-    if [ "$block" == "" ] || [ "$block" -eq 0 ] || \
-       [ "$count" == "" ] || [ "$count" -eq 0 ]; then break; fi
+    if [ -z "$block" ] || [ $block -eq 0 ] || \
+       [ -z "$count" ] || [ $count -eq 0 ]; then break; fi
     for (( i = 0; i < count; i++ )); do
       echo $(( block + i ))
     done
@@ -540,17 +524,16 @@ create_ddrescue_error_blocklist() {
   #
   # Check if map file is a drive-relative or partition relative.
   # If drive relative, compute the partition offset and subtract
-  # it from the drive block adddresses, as fsck is partition-relative
-  # addresssing.
+  # it from the drive block addresses, as fsck is partition-relative
+  # addressing.
   #
   # fsck_hfs expects block addresses to be drive relative
   # fsck is relative to partition, so if <device> is a drive
   # then compute offset.
   #
   # At this point we know <device> is a partition not a drive.
-  local partition_offset
   local map_device
-  let partition_offset=0
+  local partition_offset=0
   map_device=$(get_device_from_ddrescue_map "$map_file")
   if [ "$device" != "$map_device" ]; then
     # Assume the map is for a drive, so compute offset.
@@ -558,7 +541,7 @@ create_ddrescue_error_blocklist() {
   fi
   echo "ERROR BLOCKLIST: $fsck_blocklist"
   parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blocklist" >| "$fsck_blocklist"
-  
+
   if [ ! -s "$fsck_blocklist" ]; then
     echo "create_ddrescue_error_blocklist: NO ERROR BLOCKS"
     exit 0
@@ -591,28 +574,27 @@ create_slow_blocklist() {
   # This only makes sense for drives, not for regular files.
   # Create a list of block addresses for rate log entires with eads slower
   # rate_limit in bytes per second
-  local partition_offset
-
+  #
   # fsck_hfs expects block addresses to be drive relative
   # fsck is relative to partition, so if <device> is a drive
   # then compute offset.
   #
   # At this point we know <device> is a partition.
-  let partition_offset=0
+  local partition_offset=0
   map_device=$(get_device_from_ddrescue_map "$map_file")
   if [ "$device" != "$map_device" ]; then
     # Assume the map is for a drive, so compute offset.
     partition_offset=$( diskutil info "$device" | grep "Partition Offset" | \
       sed -E 's/^.*\(([0-9]*).*$/\1/' )
     echo "PARTITION OFFSET: $partition_offset"
-    if [ "$partition_offset" == "" ] || [ "$partition_offset" -eq 0 ]; then
+    if [ -z "$partition_offset" ] || [ $partition_offset -eq 0 ]; then
       echo "Something went wrong calculating partition offset"
       return 1
     fi
   fi
 
   echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_limit"
-  parse_rate_log_for_fsck "$rate_log" "$slow_blocklist" "$slow_limit" >> \ 
+  parse_rate_log_for_fsck "$rate_log" "$slow_blocklist" "$slow_limit" >> \
     "$slow_blocklist"
 
   if [ ! -s "$slow_blocklist" ]; then
@@ -622,7 +604,7 @@ create_slow_blocklist() {
 }
 
 ################################
-# FUNCTIONS FOR RUNNING ddrescue 
+# FUNCTIONS FOR RUNNING ddrescue
 ################################
 
 make_ddrescue_helper() {
@@ -655,23 +637,22 @@ scrape="${7:-false}"
 
 next_rate_log_name() {
   local rate_log="$1"
-  
+
   # ddrescue overwrites the rate log for any run that makes progress,
   # so give each run is own log file, named xxx-0...xxx-N
-  # If ddrescue is "Finished" no rate log is output from subsequent runs. 
-  
+  # If ddrescue is "Finished" no rate log is output from subsequent runs.
+
   local last_log
-  local c
-  let c=0
+  local c=0
   # Get name of latest rate log; squelch error if none.
   last_log="$(ls -1 -t  ${rate_log}-* | head -1)" 2> /dev/null
-  if [ "$last_log" == "" ]; then
+  if [ -z "$last_log" ]; then
     # XXX If more than 1000 rate logs the naming gets janky but it
     # will still work.
     echo "${rate_log}-000"
   else
     # xxx-000 -> c=0+1 --> xxx-001
-    let c=${last_log##*-}; let c++
+    c=${last_log##*-}; let c++
     echo $(printf "${rate_log}-%03d" $c)
   fi
 }
@@ -683,7 +664,7 @@ next_rate_log_name() {
 missing=false
 args=("$@")
 for (( i=0; i<=4; i++ )); do
-  if [ "${args[$i]}" == "" ]; then missing=true; fi
+  if [ -z "${args[$i]}" ]; then missing=true; fi
 done
 if $missing; then
   echo "$(basename "$0"): copy: missing parameter(s)"
@@ -704,10 +685,10 @@ if ! $trim; then opts+=" -N"; fi
 if ! $scrape; then opts+=" -n"; fi
 opts+=" --log-events=$event_log"
 
-let tries=0
-let max=10
+local tries=0
+local max=10
 finished=false
-while ! $finished && [ "$tries" -lt "$max" ]; do
+while ! $finished && [ $tries -lt $max ]; do
   let tries+=1
   ddrescue $opts  --log-rates="$(next_rate_log_name $rate_log)" \
     "$source" "$device" "$map_file"
@@ -752,6 +733,7 @@ resource_exists() {
 
 get_inode() {
   local path="$1"
+
   if [ ! -f "$path" ]; then return 1;  fi
   case $(get_OS) in
     macOS)
@@ -768,6 +750,7 @@ get_inode() {
 
 get_symlink_target() {
   local path="$1"
+
   case $(get_OS) in
     macOS)
       # stat exit status returns 0 regardless wheether symnlink is resolved.
@@ -785,13 +768,14 @@ get_symlink_target() {
 
 get_alias_target() {
   local path="$1"
+
   if [ ! -f "$path" ]; then return 1;  fi
   case $(get_OS) in
     macOS)
       # Heredoc exit status returns 0 regardless wheether alias is resolved.
       target=$( osascript -e'on run {a}
         set p to POSIX file a
-        tell app "finder" 
+        tell app "finder"
           set Xype to kind of item p
           if Xype is "Alias" then
             set myPath to original item of item p
@@ -813,6 +797,7 @@ get_alias_target() {
 
 get_commandline_from_map() {
   local map_file="$1"
+
   if [ ! -s "$map_file" ]; then
     echo "get_commandline_from_map: no map file"
     exit 1
@@ -839,6 +824,7 @@ resource_matches_map() {
 
 get_partition_uuid() {
   local dev="$1"
+
   # XXX Not used.
   case $(get_OS) in
     macOS)
@@ -911,8 +897,8 @@ get_fs_type() {
 
 is_mounted() {
   local dev="$1"
-  local mounted
 
+  local mounted
   case $(get_OS) in
     macOS)
       mounted=$(diskutil info "$dev" | \
@@ -950,7 +936,7 @@ is_device() {
   # /dev/null is regarded as NOT a device
   local device="$1"
   local quiet="${2:-true}"
-  
+
   if ! [[ "$device" =~ ^/dev ]]; then return 1; fi
 
   if [[ "$device" =~ ^/dev/null$ ]]; then return 1; fi
@@ -988,7 +974,7 @@ get_partition_offset() {
       offset=$( diskutil info "$device" | grep "Partition Offset" | \
                 sed -E 's/^.*\(([0-9]*).*$/\1/' )
       echo "PARTITION OFFSET: $offset" >&2
-      if [ "$offset" == "" ] || [ "$offset" -eq 0 ]; then
+      if [ -z "$offset" ] || [ $offset -eq 0 ]; then
         echo "Something went wrong calculating partition offset" >&2
         echo "0"
         return 1
@@ -1007,7 +993,6 @@ get_partition_offset() {
 
 device_is_boot_drive() {
   local device="$1"
-  local boot_drive
 
 # XXX
 #  local x
@@ -1021,6 +1006,8 @@ device_is_boot_drive() {
 #      else
 #      fi
 # XXX
+
+  local boot_drive
 
   if [[ "$device" =~ ^/dev/null$ ]]; then return 1; fi
 
@@ -1064,7 +1051,7 @@ get_device_from_ddrescue_map() {
   local x
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
-  if [ "$x" == "" ]; then
+  if [ -z "$x" ]; then
     error "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
     exit 1
   fi
@@ -1122,8 +1109,7 @@ list_partitions() {
       echo "PARTITION LIST INCLUDES ESP: $include_efi" >&2
 #      echo "list_partitions: $device" >&2
       local p=""
-      local c
-      local v
+      local c v
 
       # The device is either a drive or a specific partition
       if [ "$device" == "$(strip_partition_id "$device")" ]; then
@@ -1149,7 +1135,7 @@ list_partitions() {
           sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
 
       else
-      
+
         echo "list_partitions: $device, device is a partition" >&2
         # Get the one conmtainer, if any
         p=( $(diskutil info "$device" | \
@@ -1158,7 +1144,7 @@ list_partitions() {
 #        echo "list_partitions: p=${p[@]}" >&2
 
         # No container, just a basic partition
-        if [ "$p" == "" ]; then
+        if [ -z "$p" ]; then
           # Return supplied device minus "/dev/" to agree with
           # output of diskutil for other cases
           echo "${device#/dev/}"
@@ -1178,7 +1164,7 @@ list_partitions() {
 #      echo "list_partitions: c=${c[@]}" >&2
 
       # For all containers, process their contents as volumes
-      v=""      
+      v=""
       if [ "$c" != "" ]; then
         for x in ${c[@]}; do
           # Contained volumes begin at continaer's partition index 1
@@ -1189,7 +1175,7 @@ list_partitions() {
 #        echo "list_partitions: v=${v[@]}" >&2
       fi
 
-      if [ "$p" == "" -a "$v" == "" ]; then
+      if [ -z "$p" ] && [ -z "$v" ]; then
         echo "list_partitions: $device has no eligible partitions" >&2
       else
         echo ${p[@]} ${v[@]}
@@ -1280,7 +1266,7 @@ remove_from_fstab() {
       # /<pattern> (go to line with pattern)
       # dd (delete line)
       # :wq (write & quit
-      echo "remove_from_fstab: $volume_uuid"      
+      echo "remove_from_fstab: $volume_uuid"
       EDITOR=vi
       sudo vifs <<EOF2 > /dev/null 2>&1
 /^UUID=$volume_uuid
@@ -1304,23 +1290,17 @@ EOF2
 
 unmount_device() {
   local device="$1"
-  
+
   # Unmount and disable auto-remoount of device
   # If device is drive, do so for all its partitions
   #
-  local partitions
-  local volume_uuid
-  local volume_name
-  local fs_type
-  local result
-  
-  let result=0
-  case $(get_OS) in
+  local partitions volume_uuid volume_name fs_type
+  local result=0
+    case $(get_OS) in
     macOS)
       # Single partition vs a drive with possible multiple parts
       # device will be a /dev spec, but diskutil list doesn't include "/dev/"
-      local p
-      local r
+      local p r
       partitions=( $(list_partitions "$device") )
       echo "unmount_device: unmounting ${partitions[@]}"
       for (( p=0; p<${#partitions[@]}; p++ )); do
@@ -1333,10 +1313,10 @@ unmount_device() {
         if [ -z "$volume_uuid" ]; then continue; fi
 
         volume_name="$(get_volume_name $part)"
-        fs_type=$(get_fs_type "$part")        
+        fs_type=$(get_fs_type "$part")
 
         add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
-        let result+=$?
+        result+=$?
 
         sudo diskutil umount "$part"
 #        let result+=$?
@@ -1361,21 +1341,15 @@ mount_device() {
 
   # Enable automount and remount device
   # If device is drive, do so for all its partitions
-  local partitions
-  local volume_uuid
-  local volume_name
-  local result
-
-  let result=0
+  local partitions volume_uuid volume_name
+  local result=0
   case $(get_OS) in
     macOS)
 #      echo "$device" "$(strip_partition_id "$device")"
       partitions=( $(list_partitions "$device") )
 #      echo ${partitions[@]}
       echo "mount_device: mounting ${partitions[@]}"
-      local p
-      local r
-      let r=0
+      local p r=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
 #        echo -n "$part "
@@ -1384,10 +1358,10 @@ mount_device() {
         volume_name="$(get_volume_name $part)"
 
         remove_from_fstab "$volume_uuid" "$volume_name"
-        let result+=$?
+        result+=$?
 
         sudo diskutil mount "$part"
-        let result+=$?
+        result+=$?
       done
       echo "/etc/fstab:"
       cat /etc/fstab; echo
@@ -1412,14 +1386,10 @@ fsck_device() {
 
   # Enable automount and remount device
   # If device is drive, do so for all its partitions
-  local partitions
-  local volume_uuid
-  local result
-  local nr_checked
-  local fs_type
-  let result=0
+  local partitions volume_uuid nr_checked fs_type
+  local result=0
 
-  if $find_files && [ "$blocklist" == "" -o ! -f "$blocklist" ]; then 
+  if $find_files && [ -z "$blocklist" -o ! -f "$blocklist" ]; then
     echo "fsck_device; missing block list for find files"
     return 1
   fi
@@ -1431,8 +1401,8 @@ fsck_device() {
       partitions=( $(list_partitions "$device" true) )
 #      echo "$device" "$(strip_partition_id "$device")"
 #      echo ${partitions[@]}
-      let nr_checked=0
-      local p
+
+      local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
         fs_type=$(get_fs_type "$part")
@@ -1625,7 +1595,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
     fi
 
     # Various use-cases can leave an orphan UUID in /etc/fstab
-    # The user could remove it with vifs(8). 
+    # The user could remove it with vifs(8).
     # This just makes it simpler.
     # Allow "UUID=" in string
     if is_uuid "${Device/UUID=}"; then
@@ -1670,7 +1640,7 @@ if $Do_Smart_Scan; then
     error "smartscan: Incompatible options (2)"
     exit 1
   fi
-  
+
   if [ $# -ne 1 ]; then
     error "smartscan: Missing or extra parameters (2)"
     exit 1
@@ -1706,7 +1676,7 @@ if $Do_Copy; then
 
   if ! which ddrescue; then
     error "ddrescue(1) not found on PATH"
-    error 
+    error
     error "You can obtain ddrescue using homebrew or macports"
     error "If you are not familiar with packages on macUS, use Homebrew."
     error "https://brew.sh/"
@@ -1724,7 +1694,7 @@ if $Do_Copy; then
   fi
 
   # GLOBALS
-  Label="$1" # Name for metadata folder including the ddresxcue map.
+  Label="$1" # Name for metadata folder including the ddrescue map.
   Copy_Source="$2"
   Copy_Dest="$3"
 
@@ -1738,33 +1708,33 @@ if $Do_Copy; then
   Rate_Log="$Label.rate-log"
   Files_Log="$Label.files-log"
   Metadata_Path=""
-  
+
   continuing=false
 
   # Verify paths don't collide
-  let res=0
+  result=0
   if ! absolute_path "$Label" > /dev/null; then
     error "copy: Invalid label path $Label"
-    let res=+1
+    let result+=1
   else
     Metadata_Path="$(absolute_path "$Label")"
   fi
   if ! absolute_path "$Copy_Source" > /dev/null; then
     error "copy: Invalid source path $Copy_Source"
-    let res=+1
+    let result+=1
   else
     Copy_Source="$(absolute_path "$Copy_Source")"
   fi
   if ! absolute_path "$Copy_Dest" > /dev/null; then
     error "Invalid destinationpath $Copy_Dest"
-    let res=+1
+    let result+=1
   else
     Copy_Dest="$(absolute_path "$Copy_Dest")"
   fi
   echo "copy: Metadata path: $Metadata_Path"
 #  echo "copy: Source path: $Copy_Source"
 #  echo "copy: Dest path: $Copy_Dest"
-  if [ $res -gt 0 ]; then exit 1; fi
+  if [ $result -gt 0 ]; then exit 1; fi
 
   if [ "$Copy_Source" == "$Copy_Dest" ] || \
      [ "$Copy_Source" == "$Metadata_Path" ] || \
@@ -1772,7 +1742,7 @@ if $Do_Copy; then
     error "copy: <label>, <source> and <destination> paths must differ"
     exit 1
   fi
-  
+
   # Map_File remains relative to the metadata directory, no harm no foul.
   # Source and destination paths are absolute to avoid hazards.
   if ! mkdir -p "$Label"; then
@@ -1814,7 +1784,7 @@ if $Do_Copy; then
     fi
     echo "copy: Source is a file: $Copy_Source"
   fi
-    
+
   # Verify Copy_Dest is eligible
   if is_device "$Copy_Dest" false; then
     if device_is_boot_drive "$Copy_Dest"; then
@@ -1851,7 +1821,7 @@ if $Do_Copy; then
 
   # Determine status: first-run or continuing.
   if [ -s "$Map_File" ]; then
-    
+
     if ! resource_matches_map "$Copy_Source" "$Map_File"; then
       # XXX Can't distingush between source and dest in the map.
       # XXX IF src /dst were reversed this would still pass.
@@ -1860,13 +1830,14 @@ if $Do_Copy; then
       exit 1
     fi
     if resource_matches_map "$Copy_Dest" "$Map_File"; then
-      if [ -s "$Copy_Dest" ]; then
+      if [ "$Copy_Dest" != "/dev/null" ] && \
+         [ ! -s "$Copy_Dest" ]; then
+        error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
+        exit 1
+      else
         # XXX Fair assumption
         # XXX Could compare the first two blocks of source / dest to verify
         continuing=true;
-      else
-        error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
-        exit 1          
       fi
       # Contimue
     else
@@ -1942,7 +1913,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   fi
 
   # GLOBALS
-  Label="$1" # Name for metadata folder including the ddresxcue map.
+  Label="$1" # Name for metadata folder including the ddrescue map.
   Device="$2"
   # Device is required becuase a although a map contains a command-line record
   # of the output device, which could be extracted, the map can be for a whole
@@ -2055,7 +2026,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     # Drive or parition, the device and the map must agree.
     if ! resource_matches_map "$Device" "$Map_File";
        then
-      error -n "zap: Existing block map ($Label) but not for $Device"
+      error "zap: Existing block map ($Label) but not for $Device"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
