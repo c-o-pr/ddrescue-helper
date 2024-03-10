@@ -181,6 +181,7 @@ This helper is macOS / HFS+ centric, but the script is made so support can be ad
 
 **Usability**
 
+- [ ] XXX For partitions, a check that metadata device partition label matches the map.
 - [ ] XXX fsck whole drive should check the overal drive as well as all partitions.
 - [ ] ADD Improve situational awareness of the EFI service partition
 - [ ] ADD -p -z checks for unmanageably large numbers of problem blocks in the map

@@ -163,15 +163,17 @@ trap _abort SIGINT SIGTERM
 #trap _suspend SIGTSTP
 
 error() {
-  echo -n "***"
+  echo -n "*** "
   echo "$@" >&2
 }
 
 get_OS() {
   if which diskutil > /dev/null; then
     echo "macOS"
-  else
+  elif which lsblk > /dev/null; then
     echo "Linux"
+  else
+    echo "(unknown)"
   fi
 }
 
@@ -199,8 +201,23 @@ absolute_path() {
 }
 
 is_uuid() {
-  # Older bash treats " as part of pattern
-  [[ "$1" =~ ^[0-9A-F]+-[0-9A-F] ]]
+  # Force uppercase of the input as a side-effect of is UUID
+  # Older bash treats " as part of =~ pattern
+  #
+  # Bug workaround, Linux volume UUIDs are treated as strings not numbers
+  # Force:
+  #   XXXX-XXXX
+  #   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+  if [[ "$1" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]]; then
+    echo "$1" | tr 'a-z' 'A-Z'
+    return 0
+  fi
+  if [[ "$1" =~ ^[A-Za-z0-9]{8}-([A-Za-z0-9]{4}-){3}-*[A-Za-z0-9]{12}$ ]]; then
+    echo "$1" | tr 'A-Z' 'a-z'
+    return 0
+  fi
+  return 1
 }
 
 ##########################
@@ -645,7 +662,7 @@ next_rate_log_name() {
   local last_log
   local c=0
   # Get name of latest rate log; squelch error if none.
-  last_log="$(ls -1 -t  ${rate_log}-* | head -1)" 2> /dev/null
+  last_log="$(ls -1 -t  ${rate_log}-* 2> /dev/null | head -1)"
   if [ -z "$last_log" ]; then
     # XXX If more than 1000 rate logs the naming gets janky but it
     # will still work.
@@ -685,8 +702,8 @@ if ! $trim; then opts+=" -N"; fi
 if ! $scrape; then opts+=" -n"; fi
 opts+=" --log-events=$event_log"
 
-local tries=0
-local max=10
+tries=0
+max=10
 finished=false
 while ! $finished && [ $tries -lt $max ]; do
   let tries+=1
@@ -723,9 +740,55 @@ run_ddrescue() {
   return $?
 }
 
-########################
-# DEVICE LOGIC FUNCTIONS
-########################
+get_commandline_from_map() {
+  local map_file="$1"
+
+  if [ ! -s "$map_file" ]; then
+    echo "get_commandline_from_map: no map file"
+    exit 1
+  fi
+  grep "# Command line: ddrescue" "$map_file"
+}
+
+resource_matches_map() {
+  local device="$1"
+  local map_file="$2"
+
+  if [ -s "$map_file" ]; then
+    # Spaces arounf $device matter!
+    if grep -q "# Mapfile. Created by GNU ddrescue" "$map_file"; then
+       grep -q " $device " "$map_file"
+    else
+      return 1
+    fi
+  else
+    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
+    return 1
+  fi
+}
+
+get_device_from_ddrescue_map() {
+  local map_file="$1"
+
+  # This depends on the map command line having the format
+  # ddrescie <options> <source> <destination> <map-file>
+  #
+  # XXX Won't work for device names (files) with white-space
+  # XXX E.g., file names
+  #
+  local x
+  x=$(grep "Command line: ddrescue" "$map_file" | \
+        sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
+  if [ -z "$x" ]; then
+    error "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
+    exit 1
+  fi
+  echo "$x"
+}
+
+############################
+# FUNCTIONS FOR DEVICE LOGIC
+############################
 
 resource_exists() {
   [ -f "$1" ] || [ -L "$1" ] || [ -b "$1" ] || [ -c "$1" ]
@@ -734,13 +797,13 @@ resource_exists() {
 get_inode() {
   local path="$1"
 
-  if [ ! -f "$path" ]; then return 1;  fi
+  if [ ! -f "$path" ]; then echo "[inode lookup failed]"; return 1;  fi
   case $(get_OS) in
     macOS)
-      stat -f %i "$path" 2> /dev/null
+      stat -f %i "$path"
       ;;
     Linux)
-      return 1
+      stat --printf %i "$path"
       ;;
     *)
       return 1
@@ -787,6 +850,7 @@ get_alias_target() {
       if [ ! -z "$target" ]; then echo "$target"; else return 1; fi
       ;;
     Linux)
+      # No alias semtantics on Linux, just a kind of plain file.
       return 1
       ;;
     *)
@@ -795,40 +859,13 @@ get_alias_target() {
   esac
 }
 
-get_commandline_from_map() {
-  local map_file="$1"
-
-  if [ ! -s "$map_file" ]; then
-    echo "get_commandline_from_map: no map file"
-    exit 1
-  fi
-  grep "# Command line: ddrescue" "$map_file"
-}
-
-resource_matches_map() {
-  local device="$1"
-  local map_file="$2"
-
-  if [ -s "$map_file" ]; then
-    # Spaces arounf $device matter!
-    if grep -q "# Mapfile. Created by GNU ddrescue" "$map_file"; then
-       grep -q " $device " "$map_file"
-    else
-      return 1
-    fi
-  else
-    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
-    return 1
-  fi
-}
-
 get_partition_uuid() {
-  local dev="$1"
+  local device="$1"
 
   # XXX Not used.
   case $(get_OS) in
     macOS)
-      diskutil info "$dev" | \
+      diskutil info "$device" | \
         grep "Disk / Partition UUID:" | \
         sed -E 's/^.+ ([-0-9A-F]+$)/\1/'
       ;;
@@ -842,16 +879,25 @@ get_partition_uuid() {
 }
 
 get_volume_uuid() {
-  local dev="$1"
+  local device="$1"
 
   case $(get_OS) in
     macOS)
-      diskutil info "$dev" | \
+      diskutil info "$device" | \
         grep "Volume UUID:" | \
         sed -E 's/^.+ ([-0-9A-F]+$)/\1/'
       ;;
     Linux)
-      return 1
+      local _id=$(lsblk -n -o UUID "$device") 
+      # Bug workaround, Linux volume UUIDs are treated as strings not numbers
+      # Force:
+      #   XXXX-XXXX
+      #   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      if [[ "$_id" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4} ]]; then
+        echo "$_id" | tr 'a-z' 'A-Z'
+      else
+        echo "$_id" | tr 'A-Z' 'a-z'
+      fi
       ;;
     *)
       return 1
@@ -869,7 +915,7 @@ get_volume_name() {
         sed -E 's/^.+: +(.+)$/\1/'
       ;;
     Linux)
-      return 1
+      lsblk -n -o LABEL "$device"
       ;;
     *)
       return 1
@@ -878,16 +924,16 @@ get_volume_name() {
 }
 
 get_fs_type() {
-  local part="$1"
+  local device="$1"
 
   case $(get_OS) in
     macOS)
-      diskutil info "$part" | \
+      diskutil info "$device" | \
         grep "Type (Bundle):" | \
         sed -E 's/^.+: *([a-z]+) *$/\1/'
       ;;
     Linux)
-      return 1
+      lsblk -n -o FSTYPE "$device"
       ;;
     *)
       return 1
@@ -896,18 +942,18 @@ get_fs_type() {
 }
 
 is_mounted() {
-  local dev="$1"
+  local device="$1"
 
   local mounted
   case $(get_OS) in
     macOS)
-      mounted=$(diskutil info "$dev" | \
+      mounted=$(diskutil info "$device" | \
                 grep "Mounted:" | \
                 sed -E 's/^.+: +([^ ].+)$/\1/')
       [ "$mounted" == "Yes" ]
       ;;
     Linux)
-      return 1
+      [ -z "$(lsblk -n -o MOUNTPOINT "$device")" ]
       ;;
     *)
       return 1
@@ -957,6 +1003,8 @@ is_device() {
     Linux)
       if $quiet; then
         lsblk -f "$device" > /dev/null
+      else
+        lsblk -f "$device"
       fi
       ;;
     *)
@@ -983,7 +1031,7 @@ get_partition_offset() {
       return 0
       ;;
     Linux)
-      return 1
+      lsblk -n -o START "$device"
       ;;
     *)
       return 1
@@ -999,7 +1047,7 @@ device_is_boot_drive() {
 #      x=$( diskutil list /dev/disk1 | \
 #             grep "Physical Store" | \
 #             sed -E 's/.+(disk[0-9]+).+$/\1/')
-#      if [ "$x" != "" ]; then
+#      if [ -z "$x" ]; then
 #        if [[ $(strip_parition_id "$device" =~ "$x" ]]; then
 #           return 1
 #        fi
@@ -1028,34 +1076,12 @@ device_is_boot_drive() {
       ;;
     Linux)
       boot_drive="/dev/$(lsblk -no pkname $(findmnt -n / | awk '{ print $2 }'))"
-      if [ "$(strip_partition_id "$device")" == "$boot_drive" ]; then
-        return 0
-      fi
-      return 1
+      [ "$(strip_partition_id "$device")" == "$boot_drive" ]
       ;;
     *)
       return 0
       ;;
   esac
-}
-
-get_device_from_ddrescue_map() {
-  local map_file="$1"
-
-  # This depends on the map command line having the format
-  # ddrescie <options> <source> <destination> <map-file>
-  #
-  # XXX Won't work for device names (files) with white-space
-  # XXX E.g., file names
-  #
-  local x
-  x=$(grep "Command line: ddrescue" "$map_file" | \
-        sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
-  if [ -z "$x" ]; then
-    error "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
-    exit 1
-  fi
-  echo "$x"
 }
 
 strip_partition_id() {
@@ -1078,39 +1104,41 @@ list_partitions() {
   local device="$1"
   local include_efi=${2:-false}
 
-  # Outputs a list of drive partitions strings stripped of /dev/
+  # Outputs a list of drive partitions strings without "/dev/"
+  #
   # E.g., "disk21s2 disk21s3" or "sdb2 sdb3"
   # The first partition on the drive is assumed to be
   # If <device> is a drive, all it's partitions are returned
   # including partitions within containers.
   # Comntainers may not be nested.
-
+  #
   # XXX return values are on stdout
   # XXX ensure debug goes to stderr
   # XXX        mapfile partitions < \
   # XXX         <( diskutil list "$device" | \
   # XXX            grep '^ *[2-9][0-9]*:' | \
   # XXX            sed -E 's/^.+(disk[0-9]+s[0-9]+).*$/\1/' )
+  #
+  # Single partition vs a drive with possible multiple parts;
+  #
+  # Device will be a /dev spec, but diskutil list doesn't output "/dev/".
+
+  echo "PARTITION LIST INCLUDES ESP: $include_efi" >&2
 
   case $(get_OS) in
 
     macOS)
-      # Single partition vs a drive with possible multiple parts
-      # device will be a /dev spec, but diskutil list doesn't output "/dev/"
-      #
       # Parse out container disks (physical stores) and
-      # Follow containers to the synthesized drive.
-      # (not-container v. container)
-      # "Container diskxx" -> Contains
-      # "Physical Store" -> Contained
+      # follow containers to the synthesized drive.
       # Multiple containers are allowed.
-      # Containers cannot be nested.
+      # Containers are not nested.
+      # Output of not-container v. container:
+      #   "Container diskxx" -> Contains
+      #   "Physical Store" -> Contained
 
-      echo "PARTITION LIST INCLUDES ESP: $include_efi" >&2
 #      echo "list_partitions: $device" >&2
       local p=""
       local c v
-
       # The device is either a drive or a specific partition
       if [ "$device" == "$(strip_partition_id "$device")" ]; then
 
@@ -1120,12 +1148,12 @@ list_partitions() {
         # grep -v means invert match
         if $include_efi; then
           p=( $(diskutil list "$device" | \
-            grep -v -e "Container disk" | \
+            grep -v -e "Container disk" -e "Snapshot" | \
             grep '^ *[1-9][0-9]*:' | \
             sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         else
           p=( $(diskutil list "$device" | \
-            grep -v -e "EFI EFI" -e "Container disk" | \
+            grep -v -e "EFI EFI" -e "Container disk" -e "Snapshot" | \
             grep '^ *[1-9][0-9]*:' | \
             sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         fi
@@ -1165,7 +1193,7 @@ list_partitions() {
 
       # For all containers, process their contents as volumes
       v=""
-      if [ "$c" != "" ]; then
+      if [ ! -z "$c" ]; then
         for x in ${c[@]}; do
           # Contained volumes begin at continaer's partition index 1
           v=( ${v[@]} $(diskutil list "$x" | \
@@ -1183,12 +1211,36 @@ list_partitions() {
 
       return 0
       ;;
+
     Linux)
-      # diskutil list
-      #lsblk -o NAME,FSTYPE,LABEL,MOUNTPOINTS,UUID "$device"
-      # diskutil info
-      #sudo blkid -o export --probe --info  "$device"
-      return 1
+
+      # The device is either a drive or a specific partition
+      if [ "$device" != "$(strip_partition_id "$device")" ]; then
+        echo "list_partitions: $device, device is a partition" >&2
+        echo "${device#/dev/}"
+        return
+      else
+        echo "list_partitions: $device, device is entire drive" >&2
+        # The EFI service parition is optionally included in the list
+        # It is never auto-mounted by default
+        # grep -v means invert match
+        local p
+        if $include_efi; then
+          p=( $(lsblk -l -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINT "$device" | \
+            grep -E -o "^[a-z]+[0-9]+") )
+        else
+          p=( $(lsblk -l -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINT "$device" | \
+            grep -E -v -e "^[a-z]1" | \
+            grep -E -o "^[a-z]+[0-9]+") )
+        fi
+        if [ -z "$p" ]; then
+          echo "list_partitions: $device has no eligible partitions" >&2
+          return 1
+        else
+#          echo XXX ${p[@]} >&2
+          echo ${p[@]}
+        fi
+      fi
       ;;
     *)
       return 1
@@ -1200,27 +1252,77 @@ list_partitions() {
 # MOUNT, UNMOUNT & FSCK
 #######################
 
-add_to_fstab() {
+os_mount() {
+  local device="$1"
+
+  if [ -z "$device" ]; then return 1;  fi
   case $(get_OS) in
     macOS)
-      local volume_uuid="$1"
-      local fs_type="$2"
-      local volume_name="${3:-(name unspecified)}"
-      local device="${4:-(device unspecified)}"
+      sudo diskutil mount "$device"
+      ;;
+    Linux)
+# XXX os_unmount for Linux is a stub for future
+# XXX handling of older fixed mountpoints
+# XXX Modern Debian, e.g.,  Ubuntu and Mint handle
+# XXX mounting through systemd and udev rules
+#
+#      local label=$(get_volume_label)
+#      if [ -z "$volume_label"]; then
+#        error "os_mount: volume has no label, not mounted"
+#        return 1
+#      fi
+#      # -A automount=yes, see systemd-mount(1)
+#      sudo systemd-mount -A \
+#        --owner "$USER" -o rw "$device" "$volume_label"
+      sudo systemctl daemon-reload
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
-      if [ "$#" -lt 2 ]; then
-        # fstab entires must list the correct filesystem type or
-        # they won't be honored by the system.
-        error "add_to_fstab: error misssing parameters"
-        return 1
-      fi
-      if grep -q "^UUID=$volume_uuid" /etc/fstab; then
-        # XXX Add update of particulars
-        echo "add_to_fstab: $volume_uuid already exists"
-        return 0
-      fi
+os_unmount() {
+  local device="$1"
 
-      echo "add_to_fstab: $volume_uuid $volume_name"
+  if [ -z "$device" ]; then return 1;  fi
+  case $(get_OS) in
+    macOS)
+      sudo diskutil unmount "$device"
+      ;;
+    Linux)
+      # See os_mount above.
+      sudo systemctl daemon-reload
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+add_to_fstab() {
+  local volume_uuid="$1"
+  local fs_type="$2"
+  local volume_name="${3:-(name unspecified)}"
+  local device="${4:-(device unspecified)}"
+
+  if [ "$#" -lt 2 ]; then
+    # fstab entires must list the correct filesystem type or
+    # they won't be honored by the system.
+    error "add_to_fstab: error misssing parameters"
+    return 1
+  fi
+  if grep -q -i "^UUID=$volume_uuid" /etc/fstab; then
+    # XXX Add update of particulars
+    echo "add_to_fstab: $volume_uuid already exists"
+    return 0
+  fi
+  echo "add_to_fstab: $volume_uuid $volume_name"
+
+  case $(get_OS) in
+    macOS)
       # Juju with vifs to edit /etc/fstab
       #
       # G (got to end)
@@ -1230,20 +1332,24 @@ add_to_fstab() {
       #
       # XXX Convert to ex(1)
       EDITOR=vi
-      sudo vifs <<EOF1 > /dev/null 2>&1
+      sudo vifs <<EOF > /dev/null 2>&1
 GA
 UUID=$volume_uuid none $fs_type rw,noauto # "$volume_name" $device:wq
-EOF1
+EOF
       if [ $? -ne 0 ]; then
         error "add_to_fstab: vifs failed"
         return 1
       fi
       return 0
       ;;
+
     Linux)
-      # get mount info and savein fstab
-      # sudo systemd-ummount device
-      return 1
+#      cat <<EOF
+      sudo sed -i "$ a UUID=$volume_uuid none $fs_type noauto 0 0 # \"$volume_name\" $device" /etc/fstab
+#EOF
+      sudo systemctl daemon-reload
+      is_mounted "$device"
+      return
       ;;
     *)
       return 1
@@ -1252,35 +1358,38 @@ EOF1
 }
 
 remove_from_fstab() {
+  local volume_uuid="$1"
+#  local volume_name="$2"
+#  local fs_type="$3"
+
+  if ! grep -q -i "^UUID=$volume_uuid" /etc/fstab; then
+    error "remove_from_fstab: $volume_uuid not found"
+    return 1
+  fi
+
   case $(get_OS) in
     macOS)
-      local volume_uuid="$1"
-#      local volume_name="$2"
-#      local fs_type="$3"
-
-      if ! grep -q "^UUID=$volume_uuid" /etc/fstab; then
-        echo "remove_from_fstab: $volume_uuid not found"
-        return 0
-      fi
       # Juju with vifs to edit /etc/fstab
       # /<pattern> (go to line with pattern)
       # dd (delete line)
       # :wq (write & quit
       echo "remove_from_fstab: $volume_uuid"
       EDITOR=vi
-      sudo vifs <<EOF2 > /dev/null 2>&1
+      sudo vifs <<EOF > /dev/null 2>&1
 /^UUID=$volume_uuid
 dd:wq
-EOF2
+EOF
       if [ $? -ne 0 ]; then
         error "remove_from_fstab: vifs failed"
         return 1
       fi
       ;;
+
     Linux)
-      # get mount info and savein fstab
-      # sudo systemd-ummount device
-      return 1
+      sudo sed -E -i "/^UUID=$volume_uuid/d" /etc/fstab
+      sudo systemctl daemon-reload
+      is_mounted "$device"
+      return
       ;;
     *)
       return 1
@@ -1296,44 +1405,40 @@ unmount_device() {
   #
   local partitions volume_uuid volume_name fs_type
   local result=0
-    case $(get_OS) in
-    macOS)
-      # Single partition vs a drive with possible multiple parts
-      # device will be a /dev spec, but diskutil list doesn't include "/dev/"
-      local p r
-      partitions=( $(list_partitions "$device") )
-      echo "unmount_device: unmounting ${partitions[@]}"
-      for (( p=0; p<${#partitions[@]}; p++ )); do
-        local part=/dev/"${partitions[$p]}"
-#        echo -n "$part "
+  # Single partition vs a drive with possible multiple parts
+  # device will be a /dev spec, but diskutil list doesn't include "/dev/"
+  local p r
+  partitions=( $(list_partitions "$device") )
+  echo "unmount_device: unmounting ${partitions[@]}"
+  for (( p=0; p<${#partitions[@]}; p++ )); do
+    local part=/dev/"${partitions[$p]}"
+#    echo -n "unmount_device: $part "
 
-        # If no volume UUID, there's no meaning to fstab entry.
-        # Volume likely read-only or not at all.
-        volume_uuid="$(get_volume_uuid $part)"
-        if [ -z "$volume_uuid" ]; then continue; fi
+    # If no volume UUID, there's no meaning to fstab entry.
+    # Volume likely read-only or not at all.
+    volume_uuid="$(get_volume_uuid $part)"
+    if [ -z "$volume_uuid" ]; then continue; fi
 
-        volume_name="$(get_volume_name $part)"
-        fs_type=$(get_fs_type "$part")
+    volume_name="$(get_volume_name $part)"
+    
+    fs_type=$(get_fs_type "$part")
 
-        add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
-        result+=$?
+    add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
+    result+=$?
 
-        sudo diskutil umount "$part"
-#        let result+=$?
-      done
-      echo "/etc/fstab:"
-      cat /etc/fstab; echo
-      return $result
-      ;;
-    Linux)
-      # get mount info and savein fstab
-      # sudo systemd-ummount device
-      return 1
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+    # Ubuntu & Mint will mount and unmount devices automatically
+    # with changes to /etc/fstab, above.
+    #
+    # When using a VM, its device arbitration may influence auto-mount
+    # logic but including a UUID in /etc/fstab seems to reliably prevent
+    # auto-mount.
+    #
+    os_mount "$part"
+#    let result+=$?
+  done
+  echo "/etc/fstab:"
+  cat /etc/fstab; echo "-"
+  return $result
 }
 
 mount_device() {
@@ -1343,40 +1448,26 @@ mount_device() {
   # If device is drive, do so for all its partitions
   local partitions volume_uuid volume_name
   local result=0
-  case $(get_OS) in
-    macOS)
-#      echo "$device" "$(strip_partition_id "$device")"
-      partitions=( $(list_partitions "$device") )
-#      echo ${partitions[@]}
-      echo "mount_device: mounting ${partitions[@]}"
-      local p r=0
-      for (( p=0; p<${#partitions[@]}; p++ )); do
-        local part=/dev/"${partitions[$p]}"
-#        echo -n "$part "
+#  echo "$device" "$(strip_partition_id "$device")"
+  partitions=( $(list_partitions "$device") )
+  echo "mount_device: mounting ${partitions[@]}"
+  local p r=0
+  for (( p=0; p<${#partitions[@]}; p++ )); do
+    local part=/dev/"${partitions[$p]}"
+#    echo -n "$part "
 
-        volume_uuid="$(get_volume_uuid $part)"
-        volume_name="$(get_volume_name $part)"
+    volume_uuid="$(get_volume_uuid $part)"
+    volume_name="$(get_volume_name $part)"
 
-        remove_from_fstab "$volume_uuid" "$volume_name"
-        result+=$?
+    remove_from_fstab "$volume_uuid" "$volume_name"
+    result+=$?
 
-        sudo diskutil mount "$part"
-        result+=$?
-      done
-      echo "/etc/fstab:"
-      cat /etc/fstab; echo
-      return $result
-      ;;
-    Linux)
-      # find saved mount info in fstab and remove, if can't find then
-      #   get LABEL, UUD, GID, USERNAME
-      # sudo systemd-mount -o uid=UID,gid=GID,rw device /media/USER/LABEL
-      return 1
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+    os_mount "$part"
+    result+=$?
+  done
+  echo "/etc/fstab:"
+  cat /etc/fstab; echo "-"
+  return $result
 }
 
 fsck_device() {
@@ -1439,13 +1530,59 @@ fsck_device() {
       fi
       return $result
       ;;
+
     Linux)
-      if ! which fsck.hfs; then
-        echo "Need a version of fsck for HFS+"
-        return 1
+      partitions=( $(list_partitions "$device" true) )
+#      echo "$device" "$(strip_partition_id "$device")"
+#      echo ${partitions[@]}
+
+      local p nr_checked=0
+      for (( p=0; p<${#partitions[@]}; p++ )); do
+        local part=/dev/"${partitions[$p]}"
+        fs_type=$(get_fs_type "$part")
+        echo "fsck_device: $part" "$fs_type"
+        case $fs_type in
+          hfsplus)
+            if ! which fsck.hfs; then
+              error "Need fsck for HFS+ (hfstools), skipping $part"
+              continue
+            fi
+
+            if ! $find_files; then
+              sudo fsck.hfs -f -y "$device"
+            else
+              # On macOS -l "lock" must be used when mounted write
+#              cat $blocklist
+              sudo fsck.hfs -n -l -B "$blocklist" "$device"
+            fi
+            let result+=$?
+            let nr_checked+=1
+            ;;
+          vfat)
+            sudo fsck -f -y "$part"
+            let result+=$?
+            let nr_checked+=1
+            ;;
+          exfat)
+            if ! which fsck.exfat; then
+              error "Missing fsck for exFAT (exfatprogs), skipping $part"
+              continue
+            fi
+            sudo fsck.exfat -a "$part"
+            let result+=$?
+            let nr_checked+=1
+            ;;
+          *)
+            echo "fsck_device Skipping $part, unknown filesystem"
+            ;;
+        esac
+      done
+      if [ $nr_checked -eq 0 ]; then
+        echo "No supported volume(s) on $device"
       fi
-      sudo fsck.hfs -f -y "$device"
+      return $result
       ;;
+
     *)
       return 1
       ;;
@@ -1597,10 +1734,11 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
     # Various use-cases can leave an orphan UUID in /etc/fstab
     # The user could remove it with vifs(8).
     # This just makes it simpler.
-    # Allow "UUID=" in string
-    if is_uuid "${Device/UUID=}"; then
+    # Allow "UUID=" in string in mixture of upper and lower.
+    # UUIDs are forced upper.
+    if _uuid=$(is_uuid "${Device/[Uu][Uu][Ii][Dd]=}"); then
       # Just remove it from /etc/fstab
-      remove_from_fstab "${Device/UUID=}"
+      remove_from_fstab "$_uuid"
       echo "/etc/fstab:"
       cat /etc/fstab; echo
       exit
@@ -1856,11 +1994,13 @@ if $Do_Copy; then
   fi
 
   # Unlikely edge case of hard links to same file
-  if [ "$(get_inode "$Copy_Source")" == "$(get_inode "$Copy_Dest")" ]; then
-    error "copy: source & destination are same file (inode: $(get_inode "$Copy_Source"))"
-    exit 1
+  if [ -f "$Copy_Source" ] && [ -f "$Copy_SDest" ]; then
+    if [ "$(get_inode "$Copy_Source")" == "$(get_inode "$Copy_Dest")" ]; then
+      error "copy: source & destination are same file (inode: $(get_inode "$Copy_Dest"))"
+      exit 1
+    fi
   fi
-
+  
   if $continuing; then
     echo "RESUMING COPY"
   elif is_device "$Copy_Dest" false || \
@@ -1938,15 +2078,23 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     exit 1
   fi
 
-  # Prints device details if not a plain file
   if ! is_device "$Device" false; then
-    error "Reports require a partition device, not a regular file"
+    if [ -f "$Device" ]; then
+      error "Reports can't be run on plain files (examine the rate log)"
+      exit 1
+    fi
+    error "report: No such device ($Device)"
     exit 1
   fi
 
   # Don't accept the startup drive or regaulr files
   if device_is_boot_drive "$Device"; then
     error "Boot drive can't be used."
+    exit 1
+  fi
+
+  if [ ! -s "$Map_File" ]; then
+    error "report: No ddrescue block map ($Label). Create with -c"
     exit 1
   fi
 
@@ -1957,7 +2105,7 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   #
   if [ -s "$Map_File" ]; then
     if ! resource_matches_map "$Device" "$Map_File"; then
-      if $Do_Error_Files_Report || $Do_Slow_Files_Repor; then
+      if $Do_Error_Files_Report || $Do_Slow_Files_Report; then
         #
         # Accept whole drive map for a partition device
         #
@@ -1977,10 +2125,6 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
 
   if $Do_Error_Files_Report || $Do_Slow_Files_Report; then
 
-    if [ ! -s "$Map_File" ]; then
-      error "report: No ddrescue block map ($Label). Create with -c"
-      exit 1
-    fi
     if ! is_hfsplus "$Device"; then
       error "report: Must be an hfsplus partition"
       exit 1
@@ -1994,19 +2138,23 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
     fi
 
     if $Do_Error_Files_Report; then
+
       create_ddrescue_error_blocklist "$Device" "$Map_File" "$Error_Fsck_Block_List"
 #      cat "$Error_Fsck_Block_List"
 
       fsck_device "$Device" true "$Error_Fsck_Block_List" | \
         tee "$Error_Files_Report"
       echo "report: files affected by errors: $Label/$Error_Files_Report"
+      
     elif $Do_Slow_Files_Report; then
+
       create_slow_blocklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Block_List"
 #      cat "$Slow_Fsck_Block_List"
 
       fsck_device "$Device" true "$Slow_Fsck_Block_List" | \
         tee "$Slow_Files_Report"
       echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
+
     else
       error "report: MAINLINE GLITCH, SHOULD NOT HAPPEN"
     fi
