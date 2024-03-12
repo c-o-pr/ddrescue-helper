@@ -179,79 +179,121 @@ With this, all the pieces of the puzzle for how to cope with my cranky drives, c
 
 This helper is macOS / HFS+ centric, but the script is made so support can be added for Linux and other filesystems.
 
-**Usability**
+## TODOs Usability
 
-- [ ] XXX For partitions, a check that metadata device partition label matches the map.
-- [ ] XXX fsck whole drive should check the overal drive as well as all partitions.
+**General**
+
+- [ ] XXX Reports incomsistent about inclusion of all blocks vs. summary between macOS and Linux.
+- [ ] XXX For partitions, check that device partition label matches the map.
 - [ ] ADD Improve situational awareness of the EFI service partition
-- [ ] ADD -p -z checks for unmanageably large numbers of problem blocks in the map
-- [ ] ADD Force use of /dev/rdisk on macOS for speed.
-- [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
 - [ ] ADD /dev/ specific fstab entries to prevent automount; including adding and removal without a corresponding drive present.
-- [ ] ADD help for changing volume LABELs and partition/volume UUIDs
-/System/Library/Filesystems/TYPE.fs/Contents/Resources/TYPE.util -s rdisk21s10
-No "/dev", -s to set new random UUID
-- [ ] ADD Only auto unmount for copy/zap not scan ?? maybe not
-- [ ] ADD Save the ddrescue work summaries for each run so that progress can be examined.
-- [ ] ADD Input a list of files to copy (source).
-- [ ] ADD Option to remove metadata by <label>
-- [ ] ADD Consistency checks for volume names and helper metadata
-- [ ] XXX fsck robustness assistance for corrupted volumes
-- [ ] ADD GPT / MBR / table recovery
-- [ ] ADD Partition superblock recovery
-- [ ] XXX Fix src/dst relative file path naming to be per CWD not the label folder
 - [ ] XXX Devices must be "/dev/" specced although this could be inferred
 - [ ] XXX Verify Label tolerates whitespace or disallow.
 - [ ] ADD selectable rate limit for -P
-- [ ] ADD zap preview and confirmation
-- [ ] ADD prettify the output of -Z and save it in a log
 - [ ] ADD a summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
-- [x] ADD Sanity checks for src/dst aliases and symlinks
+- [ ] ADD Only auto unmount for copy/zap not scan ?? maybe not
+- [ ] ADD Save the ddrescue work summaries for each run so that progress can be examined.
+- [ ] ADD Option to remove metadata by <label>
+- [ ] ADD Consistency checks for volume names matching map metadata
+- [ ] ADD Input a list of files to copy (source) and a tree of netadata.
+- [ ] ADD pass additional options to ddrescue
+- [ ] XXX fsck whole drive format vs. volumes.
+- [ ] ADD -p -z -Z checks for unmanageably large numbers of problem blocks in the map
+- [x] ADD zap preview and confirmation
 - [x] ADD -z print a summary of LBA extents affected by read errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
+- [x] ADD prettify the output of -Z and save it in a log
+- [x] XXX Fix src/dst relative file path naming to be per CWD not the label folder
+- [x] ADD Sanity checks for src/dst aliases and symlinks
 - [x] ADD Check for source file is newer than dest file
 - [x] ADD Check for <file> to <file> if destination is directory
 - [x] XXX identical source / dest check needs to consider different paths to same resource
-- [x] XXX -s Slow reads block spread for best coverage.
+- [x] XXX -s Slow reads extent spread for coverage vs block quantity.
 - [x] XXX -p -s Adjust partition offset based on device specified
 - [x] ADD rate log reporting for slow areas and related files
 - [x] ADD check for map match to source / desk
 
-**Documentation**
+**Drive Format**
 
-- [ ] XXX After cloning a drive or partition, the duplicates are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be re-enumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID. 
+- [ ] ADD GPT / MBR / table inspection & recovery
+- [ ] ADD Partition superblock recovery
+- [ ] ADD Save and restore partition table to metadata
+- [x] ADD MBR vs GPT awareness?
+
+***Mac & Filesystem Support***
+
+- [ ] XXX Investigate limits of APFS partition cloning
+- [ ] ADD Force use of /dev/rdisk on macOS for speed.
+- [ ] ADD help for changing volume LABELs and partition/volume UUIDs
+/System/Library/Filesystems/TYPE.fs/Contents/Resources/TYPE.util -s rdisk21s10
+No "/dev", -s to set new random UUID
+- [x] ADD APFS fsck
+- [x] ADD FAT, exFAT fsck
+
+**Linux Mainline**
+
+- [ ] ADD Linux zap (via hdparm)
+- [x] ADD -m -u -c -p -s -z on Linux
+
+**Linux FAT, ExFAT**
+
+- [ ] ADD FAR, ExFAT reports
+- [x] ADD FAT, ExFAT file lookup and fsck (optional dostools)
+
+**Linux NTFS**
+
+- [ ] ADD option to clone using ntfsclone
+- [ ] ADD Linux ddrutility support to full partition / drive copy for NTFS
+- [x] ADD NTFS fsck (ntfsprogs: ntfsfix)
+- [x] ADD NTFS reports (ntfsprogs: ntfscluster)
+
+**Linux EXT2/3/4**
+
+- [ ] ADD Option to pass error blocklist to fsck -l (set aside blocks) 
+- [ ] ADD badblocks(8) style integration for ext3/4
+- [x] ADD ext2,3,4 file lookup and fsck
+- [x] ADD ext2,3,4 reports
+
+## TODOs Documentation
+
+- [ ] ADD Explanatiions about how to read the map, the support metadata, and the thinking about blocklists, extents, and blocksize considerations.
+- [ ] ADD Explanations about modern vs older versions of Linux.
+- [ ] ADD Explanation about APFS and bootdrive exclusions
+- [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
+- [ ] ADD Explain GPT vs other partitioning implications.
+- [ ] XXX Explain unmount on macOS & Linux, incl volume UUIDs, read-only,
+interactions with systemd, etc.
+- [ ] XXX Assistance for thinking about corrupted volumes
+- [ ] ADD Explaim volume UUID edge-cases
+- [ ] XXX After cloning a drive or partition, the clone(s) are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be re-enumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID. 
 - [ ] XXX Explain the importance of unmount and hazards of remount.
 - [ ] ADD Explanation of the ESP
 - [ ] ADD basics of ddrescue, and device specification, inc. hazards
-- [ ] XXX Device id in OS may change between runs (doc)
-- [ ] XXX Encrypted drives not considered (doc)
+- [ ] XXX Device id in OS may change between runs
+- [ ] XXX Encrypted drives not considered
 - [ ] XXX -u works for device with intact accessible partition volume metadata but drive errors on metadata may cause a lockup before processing. Cover this in the usage notes
 
-**Robustness**
+## TODOs Robustness
 
+- [ ] ADD Regression test suite
 - [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the mapfile due to ambiguous whitespace
-- [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+. CCC used to offer a helper; now it's a UI option.
+- [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+ (Linux?). CCC used to offer a helper; now it's a UI option.
 - [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a baad volume worse before copying.
 - [ ] ADD zap blocklist sanity check for drive/part metadata regions
 - [ ] XXX For -p -s Figure out a way to look up src/dst devices from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
+- [x] XXX Fix volume -u -m UUID edgecase handling to Linux only.
 - [x] XXX Use stat(1) to check for src/dst hard links
 - [x] ADD copy destination overwrite confirmation
 
-**Linux & Filesystem Support**
-
-- [ ] ADD Linux ddrutility support to full partition / drive copy for NTFS
-- [ ] XXX Test -m -u -c -p -s -z Z on Linux
-- [ ] ADD ext2,3,4 file lookup and fsck
-- [ ] ADD FAT, NTFS file lookup and fsck, including ddrutility for sparse recovery of NTFS volumes.
-- [ ] ADD pass additional options to ddrescue
-- [ ] ADD badblocks(8) style integration for ext3/4
-
-**Code**
-- [ ] Replace vi(1) with ex(1) in -m -u
+## TODOs Code
+- [ ] XXX Replace vi(1) with ex(1) in macOS -m -u
 - [ ] XXX For -p -s Figure out a way to look up target device from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
-- [ ] shellcheck review
+- [x] shellcheck review (first pass)
+- [x] Refactor blocklist creation to better separate ext2/3/4 report
+generation which requires block address to be in filesystem blocks not
+device blocks, while partition offsets are always device blocks.
 
-**SMART / Drive Logic**
+## TODOs Drive Logic
 
 - [ ] XXX -Z Blocksize and zap alignment on 4K Advanced Format drives???
 - [ ] XXX Revisit dd --odirect / --idirect options

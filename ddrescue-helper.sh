@@ -1,4 +1,6 @@
 #!/bin/bash
+#set -x
+TRACE=false
 
 usage() {
   cat << USAGE
@@ -29,7 +31,7 @@ $(basename "$0") Usage:
 
     -z Zap preview. Print a list of block regions that will nbe zapped,
        but don't zap them. Examine the list to sanity check before -Z.
-    -Z [DANGEROUS] Overwrite drive blocks at error regions specified by map data
+    -Z [DANGEROUS] Overwrite drive blocks at _error regions specified by map data
        to help trigger <device> to re-allocate underlying sectors.
 
   <label> Name for a directory created to contain ddrescue map and log data.
@@ -98,7 +100,7 @@ $(basename "$0") Usage:
 
   -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
 
-  -p Report for HFS+ partition of files affected by error regions
+  -p Report for HFS+ partition of files affected by _error regions
      listed in the ddrescue map for <label>. Affected files can be
      restored from backup or rescued individually using this helper.
 
@@ -116,7 +118,7 @@ $(basename "$0") Usage:
      Map data from an unfinished copy can be used with -p and -s with the
      obvious caveat of missing infomration.
 
-  -z Print a preview of error blocks to be zapped, allowing you to sanity check
+  -z Print a preview of _error blocks to be zapped, allowing you to sanity check
      the implications before actually zapping with -Z. For example, if you
      have errors in the first 40 512-byte blocks for a GPT drive, you will
      overwrite the drive's partition table, so make a copy of
@@ -162,9 +164,17 @@ trap _abort SIGINT SIGTERM
 #}
 #trap _suspend SIGTSTP
 
-error() {
-  echo -n "*** "
-  echo "$@" >&2
+_error() {
+  local caller=$( [ ${FUNCNAME[1]} != "main" ] && \
+                  echo "${FUNCNAME[1]}:" || \
+                  echo "" )
+  echo "*** $caller $@" >&2
+}
+_DEBUG() {
+  [ $TRACE ] || echo "DEBUG: ${FUNCNAME[1]}: $@" >&2
+}
+_info() {
+  echo "$@"
 }
 
 get_OS() {
@@ -179,9 +189,9 @@ get_OS() {
 
 escalate() {
 # XXX not used
-  echo "Escalating privileges..."
+  _info "Escalating privileges..."
   if ! sudo echo -n; then
-    echo "sudo failed"
+    _error "sudo failed"
     exit 1
   fi
 }
@@ -190,7 +200,7 @@ absolute_path() {
   # Run in a subshell to prevent hosing the current working dir.
   # XXX This breaks if current user cannot cd into a path element.
   (
-    if [ -z "$1" ]; then return 1; fi
+    if [ -z $1 ]; then return 1; fi
     if ! cd "$(dirname "$1")"; then return 1; fi
     case "$(basename $1)" in
         ..) echo "$(dirname $(pwd))";;
@@ -204,19 +214,46 @@ is_uuid() {
   # Force uppercase of the input as a side-effect of is UUID
   # Older bash treats " as part of =~ pattern
   #
-  # Bug workaround, Linux volume UUIDs are treated as strings not numbers
+  # Linux bug workaround, Linux volume UUIDs are treated as strings not numbers
   # Force:
   #   XXXX-XXXX
+  #   XXXXXXXXXXXXXXXX
   #   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-  if [[ "$1" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]]; then
-    echo "$1" | tr 'a-z' 'A-Z'
-    return 0
-  fi
-  if [[ "$1" =~ ^[A-Za-z0-9]{8}-([A-Za-z0-9]{4}-){3}-*[A-Za-z0-9]{12}$ ]]; then
-    echo "$1" | tr 'A-Z' 'a-z'
-    return 0
-  fi
+  case $(get_OS) in
+    macOS)
+      if [[ "$1" =~ ^[A-Za-z0-9]{8}-([A-Za-z0-9]{4}-){3}-*[A-Za-z0-9]{12}$ ]]; then
+        echo "$1"
+        return 0
+      fi
+      return 1
+      ;;
+    Linux)
+      # XXXX-XXXX
+      if [[ "$1" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]]; then
+        echo "$1" | tr 'a-z' 'A-Z'
+        _DEBUG "$1" | tr 'a-z' 'A-Z' 
+        return 0
+      fi
+      # XXXXXXXXXXXXXXXX
+      if [[ "$1" =~ ^[A-Za-z0-9]{16}$ ]]; then
+        echo "$1" | tr 'a-z' 'A-Z'
+        _DEBUG "$1" | tr 'a-z' 'A-Z' 
+        return 0
+      fi
+      # xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      if [[ "$1" =~ ^[A-Za-z0-9]{8}-([A-Za-z0-9]{4}-){3}-*[A-Za-z0-9]{12}$ ]]; then
+        echo "$1" | tr 'A-Z' 'a-z'
+        _DEBUG "$1" | tr 'A-Z' 'a-z' 
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
   return 1
 }
 
@@ -253,12 +290,12 @@ zap_sequence() {
   printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
   while [ "$c" -le "$count" ]; do
     printf "%d (0x%X) read " "$block" "$block"
-#    echo -n "$block read "
+#    debug -n "$block read "
     let t=$(date +%s)+2
     read_block "$target" "$block" > /dev/null 2>&1
     result=$?
     t2=$(date +%s)
-#    echo $t $t2
+#    debug $t $t2
     if [ $result -ne 0 ] || [ $t -lt $t2 ]; then
       echo -n "FAILED ($result), write "
       write_block "$target" "$block"  > /dev/null 2>&1
@@ -277,12 +314,11 @@ zap_sequence() {
     else
       echo -n "ok"
     fi
-#    echo $block
     let block+=1
     let c+=1
     echo
   done
-  echo "zap_sequence: done, $count blocks"
+  _info "done, $count blocks"
 }
 
 zap_from_mapfile() {
@@ -293,32 +329,31 @@ zap_from_mapfile() {
 
   echo "$zap_blocklist"
 
-  grep -v "^#" "$map_file" | \
-  grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
-  grep -e - -e / -e '*' | \
-  ddrescue_map_bytes_to_blocks 512 \
-  sort -n >| "$zap_blocklist"
+  # Parse map for zap
+  extract_error_extents_from_map_file "$map_file" | \
+   ddrescue_map_extents_bytes_to_blocks 512 | \
+   sort -n >| "$zap_blocklist"
 
   if [ ! -s "$zap_blocklist" ]; then
-    echo "zap_from_mapfile: Missing or empty bad-block list"
+    _info "Missing or empty bad-block list"
     return 1
   fi
   if grep '[^0-9 ]' "$zap_blocklist"; then
-    echo "zap_from_mapfile: Bad-block list should be a list of numbers"
+    _info "Bad-block list should be a list of numbers"
     return 1
   fi
 
   local block count total_blocks=0
   if $preview; then
-    echo "zap_from_mapfile: PREVIEW"
+    _info "PREVIEW"
   fi
-  echo "zap_from_mapfile: DEVICE BLOCK COUNT (hex)"
+  _info "DEVICE BLOCK COUNT (hex)"
   cat "$zap_blocklist" | \
   { \
     while read block count; do
-      if [ -z "$block" ] || [ $block -eq 0 ] || \
-         [ -z "$count" ] || [ $count -gt 500 ]; then
-        echo "zap_from_mapfile: Bad block list: address is 0 or count > 500"
+      if [ -z $block ] || [ $block -eq 0 ] || \
+         [ -z $count ] || [ $count -gt 500 ]; then
+        _info "address is 0 or count > 500"
         return 1
       fi
       let total_blocks+=$count
@@ -329,7 +364,7 @@ zap_from_mapfile() {
         zap_sequence "$device" "$block" "$count"
       fi
     done
-    echo "zap_from_mapfile: done, total $total_blocks blocks"
+    _info "done, total $total_blocks blocks"
   }
 
   return 0
@@ -367,7 +402,7 @@ smart_scan_drive() {
 
   # Zaps on the fly to get SMART test to move ahead
 
-  if [ -z "$drive" ]; then exit 1; fi
+  if [ -z $drive ]; then exit 1; fi
 
   start_smart_selftest "$drive"
 
@@ -439,13 +474,41 @@ sanity_check_blocklist() {
       return 0
       ;;
     *)
-      echo "sanity_check_block_address: unknown device type $device_type"
+      _info "unknown device type $device_type"
       return 1
       ;;
   esac
 }
 
-ddrescue_map_bytes_to_blocks() {
+extract_error_extents_from_map_file() {
+  grep -v "^#" "$1" | \
+  grep -E '0x[0-9a-fA-F]+ +0x[0-9a-fA-F]+' | \
+  grep -e - -e / -e '*'
+}
+
+extents_to_list() {
+  local partition_offset="$1"
+  local device_blocksize="$2"
+  local fs_blocksize="$3"
+
+  if [ $# -lt 3 ]; then
+    _error "missing parameters"
+    return 1
+  fi
+  _DEBUG $partition_offset $device_blocksize $fs_blocksize 
+  local block count
+  while IFS=" " read block count; do
+    block=$(( (block - partition_offset) / (fs_blocksize / device_blocksize) ))
+    _DEBUG $block 
+    if [ -z $block ] || [ $block -eq 0 ] || \
+       [ -z $count ] || [ $count -eq 0 ]; then break; fi
+    for (( i = 0; i < count; i++ )); do
+      echo $(( block + i ))
+    done
+  done
+}
+
+ddrescue_map_extents_bytes_to_blocks() {
   local blocksize="${1:-512}"
 
   # Convert hex map data for byte addresses and extents
@@ -455,86 +518,56 @@ ddrescue_map_bytes_to_blocks() {
   #   0x800  0x200  extraneous
   # Output:
   #   4      1
-  # 0 or 0 are skipped.
+  # 0 or 0 are skipped
   #
+  _DEBUG "blocksize $blocksize"
   local addr len
   while read addr len x; do
+    _DEBUG input $addr $len
     addr=$(( addr / blocksize ))
-    len=$(( len / blocksize ))
+    len=$(( (len + blocksize - 1 ) / blocksize ))
     # Edge case
     if  (( addr == 0 || len == 0 )); then continue; fi
     # decimal
     echo $addr $len
+    _DEBUG output $addr $len 
   done
 }
 
 parse_ddrescue_map_for_fsck() {
   local map_file="$1"
-  local fsck_blocklist="$2" # side-effect
+  local fsck_blocklist="$2" # filename for EXTENTS side-effect
+  local partition_offset="${3:-0}"
+  local device_blocksize="${4:-512}"
+  local fs_blocksize="${5:-4096}" # For ext2/3/4 reports, req debugfs
 
-  # Pull a list of error extents from the map
+  # Pull a list of _error extents from the map
   # convert them from byte to block addresses
   # and emit a list of corresponding blocks.
   #
   # The map file is a list of byte addresses.
   # EXTENTS just for debugging the calculation.
+  #
+  # The partition offset is in drive sectors
+  # The block addresses may be in filesystem blocks
+  #
+  if [ $# -lt 2 ]; then
+    _error "missing parameters"
+    return 1
+  fi
   local block count
-  grep -v '^#' "$map_file" | \
-  grep -E '0x[0-9A-F]+ +0x[0-9A-F]+' | \
-  grep -e - -e / -e '*' | \
-  ddrescue_map_bytes_to_blocks | tee "${fsck_blocklist}-EXTENTS" | \
-  sort -n | \
-  while IFS=" " read block count; do
-    let block=$block-$partition_offset
-    if [ -z "$block" ] || [ $block -eq 0 ] || \
-       [ -z "$count" ] || [ $count -eq 0 ]; then break; fi
-    for (( i = 0; i < count; i++ )); do
-      echo $(( block + i ))
-    done
-  done
-}
-
-parse_rate_log_for_fsck() {
-  local rate_log="$1"
-  local slow_blocklist="$2" # Output file name
-  local slow_limit="$3" # Regions slower than this are selected
-
-  local n addr rate ave_rate bad_areas bad_size interval block count
-  grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
-  while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
-    # Log entires are issued once per second Compute a sparse list of blocks
-    # based on the rate for that second to cover the region with 10 samples at
-    # evenly spaced intervals. Advanced Format drives are fundamentally 4096
-    # byte formats, so place samples on mod 4096 byte intervals
-    # Interger div rounds down.
-    #
-    if (( rate < "$slow_limit" )); then
-      interval=$(( rate / 50 / 4096 ))
-      for (( i=0; i<=interval; i++ )); do
-        echo $(( addr + ( i * interval * 4096 ) )) 0x200
-      done
-    fi
-  done | \
-  # The compendium of logs may duplicate slow regions so filter dups out
-  # EXTENTS just for debugging the calculation
-  uniq | \
-  sort -n | \
-  ddrescue_map_bytes_to_blocks | tee "${slow_blocklist}-EXTENTS" | \
-  while read block count; do
-    let block=$block-$partition_offset
-    if [ -z "$block" ] || [ $block -eq 0 ] || \
-       [ -z "$count" ] || [ $count -eq 0 ]; then break; fi
-    for (( i = 0; i < count; i++ )); do
-      echo $(( block + i ))
-    done
-  done >| "$slow_blocklist"
+  extract_error_extents_from_map_file "$map_file" | \
+    ddrescue_map_extents_bytes_to_blocks $device_blocksize | \
+    tee "${fsck_blocklist}-EXTENTS" | \
+    sort -n | \
+    extents_to_list "$partition_offset" "$device_blocksize" "$fs_blocksize"
 }
 
 create_ddrescue_error_blocklist() {
   local device="$1"
   local map_file="$2"
   local fsck_blocklist="$3" # side-effect
-  local blocksize="${4:-512}"
+  local partition_offset="${4:-0}"
 
   # Translate a map file into a list of blocks that can be
   # used with fsck -B to list files.
@@ -547,20 +580,78 @@ create_ddrescue_error_blocklist() {
   # fsck_hfs expects block addresses to be drive relative
   # fsck is relative to partition, so if <device> is a drive
   # then compute offset.
-  #
-  # At this point we know <device> is a partition not a drive.
-  local map_device
-  local partition_offset=0
-  map_device=$(get_device_from_ddrescue_map "$map_file")
-  if [ "$device" != "$map_device" ]; then
-    # Assume the map is for a drive, so compute offset.
-    partition_offset=$(get_partition_offset "$device")
+
+  if [ $# -lt 3 ]; then
+    _error "missing parameters"
+    return 1
   fi
-  echo "ERROR BLOCKLIST: $fsck_blocklist"
-  parse_ddrescue_map_for_fsck "$map_file"  "$fsck_blocklist" >| "$fsck_blocklist"
+  _info "ERROR BLOCKLIST: $fsck_blocklist"
+  parse_ddrescue_map_for_fsck \
+    "$map_file" \
+    "$fsck_blocklist" \
+    "$partition_offset" \
+    $(get_device_blocksize "$device") \
+    $(get_fs_blocksize "$device") \
+      >| "$fsck_blocklist"
 
   if [ ! -s "$fsck_blocklist" ]; then
-    echo "create_ddrescue_error_blocklist: NO ERROR BLOCKS"
+    _info "NO ERROR BLOCKS"
+    exit 0
+  fi
+}
+
+parse_rate_log_for_fsck() {
+  local rate_log="$1"
+  local slow_blocklist="$2" # Output file name
+  local slow_limit="$3" # Regions slower than this are selected
+  local partition_offset="${4:-0}"
+  local device_blocksize="${5:-512}"
+  local fs_blocksize="${6:-4096}" # For ext2/3/4 reports, req debugfs
+
+  local n addr rate ave_rate bad_areas bad_size interval block count
+  grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
+    while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
+      # Log entires are issued once per second. Compute a sparse list of extents
+      # based on the rate for that second to cover the region with 10 samples at
+      # evenly spaced intervals. Advanced Format drives are fundamentally 4096
+      # byte formats, so place samples on 4096 byte intervals
+      # Interger div rounds down.
+      #
+      if (( rate < "$slow_limit" )); then
+        interval=$(( rate / 50 / 4096 ))
+        for (( i=0; i<=interval; i++ )); do
+          echo $(( addr + ( i * interval * 4096 ) )) 0x200
+        done
+      fi
+    done | \
+    # The compendium of logs may duplicate slow regions so filter dups out
+    # EXTENTS just for debugging the calculation
+    uniq | \
+    sort -n | \
+    ddrescue_map_extents_bytes_to_blocks $device_blocksize | \
+    tee "${slow_blocklist}-EXTENTS" | \
+    extents_to_list "$partition_offset" "$device_blocksize" "$fs_blocksize"
+}
+
+create_slow_blocklist() {
+  local device="$1"
+  local rate_log="$2"
+  local slow_blocklist="$3" # Output file name
+  local partition_offset="${4:-0}"
+  local slow_limit="${5:-1000000}" # Regions slower than this are selected
+
+  _info "SLOW BLOCKLIST (less than $slow_limit bytes per sec)"
+  parse_rate_log_for_fsck \
+    "$rate_log" \
+    "$slow_blocklist" \
+    "$slow_limit" \
+    "$partition_offset" \
+    $(get_device_blocksize "$device") \
+    $(get_fs_blocksize "$device") \
+      >> "$slow_blocklist"
+
+  if [ ! -s "$slow_blocklist" ]; then
+    _info "NO SLOW BLOCKS"
     exit 0
   fi
 }
@@ -576,46 +667,7 @@ create_smartctl_error_blocklist() {
     uniq | sort -n > "$smart_blocklist"
 
   if [ ! -s "$fsck_blocklist" ]; then
-    echo "create_smartctl_error_blocklist: NO ERROR BLOCKS"
-    exit 0
-  fi
-}
-
-create_slow_blocklist() {
-  local device="$1"
-  local map_file="$2"
-  local rate_log="$3"
-  local slow_blocklist="$4" # Output file name
-  local slow_limit="${5:-1000000}" # Regions slower than this are selected
-
-  # This only makes sense for drives, not for regular files.
-  # Create a list of block addresses for rate log entires with eads slower
-  # rate_limit in bytes per second
-  #
-  # fsck_hfs expects block addresses to be drive relative
-  # fsck is relative to partition, so if <device> is a drive
-  # then compute offset.
-  #
-  # At this point we know <device> is a partition.
-  local partition_offset=0
-  map_device=$(get_device_from_ddrescue_map "$map_file")
-  if [ "$device" != "$map_device" ]; then
-    # Assume the map is for a drive, so compute offset.
-    partition_offset=$( diskutil info "$device" | grep "Partition Offset" | \
-      sed -E 's/^.*\(([0-9]*).*$/\1/' )
-    echo "PARTITION OFFSET: $partition_offset"
-    if [ -z "$partition_offset" ] || [ $partition_offset -eq 0 ]; then
-      echo "Something went wrong calculating partition offset"
-      return 1
-    fi
-  fi
-
-  echo "SLOW BLOCKLIST ($slow_limit bytes per sec): $slow_limit"
-  parse_rate_log_for_fsck "$rate_log" "$slow_blocklist" "$slow_limit" >> \
-    "$slow_blocklist"
-
-  if [ ! -s "$slow_blocklist" ]; then
-    echo "create_slow_blocklist: NO SLOW BLOCKS"
+    _info "NO ERROR BLOCKS"
     exit 0
   fi
 }
@@ -631,14 +683,14 @@ make_ddrescue_helper() {
   local helper_script="${1:-ddrescue.sh}"
 
   if ! which ddrescue > /dev/null; then
-    echo "make_ddrescue_helper: ddrescue not found on PATH"
+    _info "ddrescue not found on PATH"
     return 1
   fi
 
   # Don't let an old helper script bollacks the work
   if [ -s "$helper_script" ]; then
     if ! rm -f "$helper_script"; then
-      echo "make_ddrescue_helper: error, coouldn't replace exosting helper"
+      _info "error, coouldn't replace exosting helper"
       return 1
     fi
   fi
@@ -661,7 +713,7 @@ next_rate_log_name() {
 
   local last_log
   local c=0
-  # Get name of latest rate log; squelch error if none.
+  # Get name of latest rate log; squelch _error if none.
   last_log="$(ls -1 -t  ${rate_log}-* 2> /dev/null | head -1)"
   if [ -z "$last_log" ]; then
     # XXX If more than 1000 rate logs the naming gets janky but it
@@ -733,10 +785,11 @@ run_ddrescue() {
 
   local helper_script="./ddrescue.sh"
   make_ddrescue_helper "$helper_script"
-  echo "run_ddrescue: $(pwd)"
+  _info "$(pwd)"
   sudo "$helper_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
        "$trim" "$scrape"
+  sudo chown $USER ./*
   return $?
 }
 
@@ -744,7 +797,7 @@ get_commandline_from_map() {
   local map_file="$1"
 
   if [ ! -s "$map_file" ]; then
-    echo "get_commandline_from_map: no map file"
+    _info "no map file"
     exit 1
   fi
   grep "# Command line: ddrescue" "$map_file"
@@ -762,7 +815,7 @@ resource_matches_map() {
       return 1
     fi
   else
-    echo "resource_matches_map: no map file: $map_file" > /dev/stderr
+    _info "$map_file" > /dev/stderr
     return 1
   fi
 }
@@ -779,8 +832,8 @@ get_device_from_ddrescue_map() {
   local x
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
-  if [ -z "$x" ]; then
-    error "get_device_from_ddrescue_map: map device = \"\"" > /dev/stderr
+  if [ -z $x ]; then
+    _error "map device = \"\"" > /dev/stderr
     exit 1
   fi
   echo "$x"
@@ -859,6 +912,23 @@ get_alias_target() {
   esac
 }
 
+get_partition_table_type() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      diskutil info "$device" | \
+        grep -q "GUID_partition_scheme" && echo "gpt" || echo "" 
+      ;;
+    Linux)
+      lsblk --raw -n -d -o PTTYPE "$device"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 get_partition_uuid() {
   local device="$1"
 
@@ -888,12 +958,14 @@ get_volume_uuid() {
         sed -E 's/^.+ ([-0-9A-F]+$)/\1/'
       ;;
     Linux)
-      local _id=$(lsblk -n -o UUID "$device") 
+      local _id="$(lsblk -n -d -o UUID "$device")"
       # Bug workaround, Linux volume UUIDs are treated as strings not numbers
       # Force:
       #   XXXX-XXXX
+      #   XXXXXXXXXXXXXXXX
       #   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-      if [[ "$_id" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4} ]]; then
+      if [[ "$_id" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]] || \
+         [[ "$_id" =~ ^[A-Za-z0-9]{16}$ ]]; then
         echo "$_id" | tr 'a-z' 'A-Z'
       else
         echo "$_id" | tr 'A-Z' 'a-z'
@@ -915,7 +987,7 @@ get_volume_name() {
         sed -E 's/^.+: +(.+)$/\1/'
       ;;
     Linux)
-      lsblk -n -o LABEL "$device"
+      lsblk -n -d -o LABEL "$device"
       ;;
     *)
       return 1
@@ -933,12 +1005,57 @@ get_fs_type() {
         sed -E 's/^.+: *([a-z]+) *$/\1/'
       ;;
     Linux)
-      lsblk -n -o FSTYPE "$device"
+      lsblk -n -d -o FSTYPE "$device"
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+get_device_blocksize() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      diskutil info "$device" | \
+        grep "Device Block Size:" | \
+        sed -E 's/^.+: *([0-9]+).*$/\1/'
+      ;;
+    Linux)
+#       echo 512
+      lsblk --raw -n -d -o PHY-SEC "$device" # --raw no whitespace
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+get_fs_blocksize() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      # macOS HFS+ -B works with drive blocks not filesystem blocks
+      diskutil info "$device" | \
+        grep "Device Block Size:" | \
+        sed -E 's/^.+: *([0-9]+).*$/\1/'
+      ;;
+    Linux)
+#       echo 512
+      sudo blkid -p -o value --match-tag FSBLOCKSIZE "$device"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_gpt() {
+  local device="$1"
+#  _info \"$(get_partition_table_type "$device")\" >&2
+  [ "$(get_partition_table_type "$device")" == "gpt" ]  
 }
 
 is_mounted() {
@@ -953,7 +1070,7 @@ is_mounted() {
       [ "$mounted" == "Yes" ]
       ;;
     Linux)
-      [ -z "$(lsblk -n -o MOUNTPOINT "$device")" ]
+      [ ! -z "$(lsblk -n -d -o MOUNTPOINT "$device")" ]
       ;;
     *)
       return 1
@@ -969,7 +1086,39 @@ is_hfsplus() {
       diskutil info "$device" | grep -q Apple_HFS
       ;;
     Linux)
-      lsblk -f "$device" | grep -q "hfsplus"
+      [ $(get_fs_type "$device") == "hfsplus" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_ntfs() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      diskutil info "$device" | grep -q NTFS
+      ;;
+    Linux)
+      [ $(get_fs_type "$device") == "ntfs" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_ext() {
+  local device="$1"
+
+  case $(get_OS) in
+    macOS)
+      return 1
+      ;;
+    Linux)
+      [[ $(get_fs_type "$device") =~ ^ext[234]$ ]]
       ;;
     *)
       return 1
@@ -1016,27 +1165,27 @@ is_device() {
 get_partition_offset() {
   local device="$1"
 
+  local offset
   case $(get_OS) in
     macOS)
-      local offset
-      offset=$( diskutil info "$device" | grep "Partition Offset" | \
-                sed -E 's/^.*\(([0-9]*).*$/\1/' )
-      echo "PARTITION OFFSET: $offset" >&2
-      if [ -z "$offset" ] || [ $offset -eq 0 ]; then
-        echo "Something went wrong calculating partition offset" >&2
-        echo "0"
-        return 1
-      fi
-      echo "$offset"
-      return 0
+      offset=$( diskutil info "$device" | \
+        grep "Partition Offset" | \
+        sed -E 's/^.*\(([0-9]*).*$/\1/' )
       ;;
     Linux)
-      lsblk -n -o START "$device"
+      # Offset is returned in device blocks
+      offset=$(lsblk -n -d -o START "$device")
       ;;
     *)
-      return 1
+      offset=0
       ;;
   esac
+  if [ -z $offset ]; then
+    _error "partition offset lookup failed" >&2
+    echo 0
+    return 1
+  fi
+  echo $offset
 }
 
 device_is_boot_drive() {
@@ -1047,7 +1196,7 @@ device_is_boot_drive() {
 #      x=$( diskutil list /dev/disk1 | \
 #             grep "Physical Store" | \
 #             sed -E 's/.+(disk[0-9]+).+$/\1/')
-#      if [ -z "$x" ]; then
+#      if [ -z $x ]; then
 #        if [[ $(strip_parition_id "$device" =~ "$x" ]]; then
 #           return 1
 #        fi
@@ -1112,22 +1261,23 @@ list_partitions() {
   # including partitions within containers.
   # Comntainers may not be nested.
   #
-  # XXX return values are on stdout
-  # XXX ensure debug goes to stderr
-  # XXX        mapfile partitions < \
-  # XXX         <( diskutil list "$device" | \
-  # XXX            grep '^ *[2-9][0-9]*:' | \
-  # XXX            sed -E 's/^.+(disk[0-9]+s[0-9]+).*$/\1/' )
-  #
   # Single partition vs a drive with possible multiple parts;
   #
   # Device will be a /dev spec, but diskutil list doesn't output "/dev/".
 
-  echo "PARTITION LIST INCLUDES ESP: $include_efi" >&2
-
+  # The EFI service parition is optionally included in the list
+  # It is never auto-mounted by default
+  # grep -v means invert match
+  local include_first_partition=true
+  if is_gpt "$(strip_partition_id "$device")" && \
+     ! $include_efi; then
+    include_first_partition=false
+    _DEBUG "is_gpt: true"
+  fi
   case $(get_OS) in
 
     macOS)
+
       # Parse out container disks (physical stores) and
       # follow containers to the synthesized drive.
       # Multiple containers are allowed.
@@ -1136,17 +1286,22 @@ list_partitions() {
       #   "Container diskxx" -> Contains
       #   "Physical Store" -> Contained
 
-#      echo "list_partitions: $device" >&2
+      _DEBUG "$device"
       local p=""
       local c v
       # The device is either a drive or a specific partition
       if [ "$device" == "$(strip_partition_id "$device")" ]; then
 
-        echo "list_partitions: $device, device is entire drive" >&2
-        # The EFI service parition is optionally included in the list
-        # It is never auto-mounted by default
-        # grep -v means invert match
-        if $include_efi; then
+        _info "$device, device is entire drive" >&2
+        _info "PARTITION LIST INCLUDES ESP: $include_efi" >&2
+
+        if $include_first_partition; then
+
+#          mapfile partitions < \
+#           <( diskutil list "$device" | \
+#              grep '^ *[2-9][0-9]*:' | \
+#              sed -E 's/^.+(disk[0-9]+s[0-9]+).*$/\1/' )
+
           p=( $(diskutil list "$device" | \
             grep -v -e "Container disk" -e "Snapshot" | \
             grep '^ *[1-9][0-9]*:' | \
@@ -1164,15 +1319,15 @@ list_partitions() {
 
       else
 
-        echo "list_partitions: $device, device is a partition" >&2
+        _DEBUG "$device device is a partition ($(get_fs_type $device))"
         # Get the one conmtainer, if any
         p=( $(diskutil info "$device" | \
           grep "APFS Container:" | \
           sed -E 's/^.+(disk[0-9]+)$/\1/') )
-#        echo "list_partitions: p=${p[@]}" >&2
+        _DEBUG "p=${p[@]}"
 
         # No container, just a basic partition
-        if [ -z "$p" ]; then
+        if [ -z $p ]; then
           # Return supplied device minus "/dev/" to agree with
           # output of diskutil for other cases
           echo "${device#/dev/}"
@@ -1182,14 +1337,14 @@ list_partitions() {
           c=( $(diskutil list "$p" | \
             grep "Container disk" | \
             sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
-#          echo "list_partitions: c=${c[@]}" >&2
+          _DEBUG "c=${c[@]}"
           # continue on to process the container
         fi
 
       fi
 
-#      echo "list_partitions: p=${p[@]}" >&2
-#      echo "list_partitions: c=${c[@]}" >&2
+      _DEBUG "p=${p[@]}"
+      _DEBUG "c=${c[@]}"
 
       # For all containers, process their contents as volumes
       v=""
@@ -1200,11 +1355,11 @@ list_partitions() {
                   grep '^ *[1-9][0-9]*:' | \
                   sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         done
-#        echo "list_partitions: v=${v[@]}" >&2
+        _DEBUG "v=${v[@]}"
       fi
 
-      if [ -z "$p" ] && [ -z "$v" ]; then
-        echo "list_partitions: $device has no eligible partitions" >&2
+      if [ -z $p ] && [ -z $v ]; then
+        _info "$device has no eligible partitions" >&2
       else
         echo ${p[@]} ${v[@]}
       fi
@@ -1216,28 +1371,29 @@ list_partitions() {
 
       # The device is either a drive or a specific partition
       if [ "$device" != "$(strip_partition_id "$device")" ]; then
-        echo "list_partitions: $device, device is a partition" >&2
+        _DEBUG "$device device is a partition ($(get_fs_type $device))"
         echo "${device#/dev/}"
         return
       else
-        echo "list_partitions: $device, device is entire drive" >&2
+        _info "$device, device is entire drive" >&2
+        _info "PARTITION LIST INCLUDES ESP: $include_efi" >&2
         # The EFI service parition is optionally included in the list
         # It is never auto-mounted by default
         # grep -v means invert match
         local p
-        if $include_efi; then
-          p=( $(lsblk -l -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINT "$device" | \
+        if $include_first_partition; then
+          p=( $(lsblk --raw -n -o NAME "$device" | \
             grep -E -o "^[a-z]+[0-9]+") )
         else
-          p=( $(lsblk -l -o NAME,FSTYPE,UUID,LABEL,MOUNTPOINT "$device" | \
-            grep -E -v -e "^[a-z]1" | \
+          p=( $(lsblk --raw -n -o NAME "$device" | \
+            grep -E -v "^[a-z]+1$" | \
             grep -E -o "^[a-z]+[0-9]+") )
         fi
-        if [ -z "$p" ]; then
-          echo "list_partitions: $device has no eligible partitions" >&2
+        if [ -z $p ]; then
+          _info "$device has no eligible partitions" >&2
           return 1
         else
-#          echo XXX ${p[@]} >&2
+          _DEBUG XXX ${p[@]} 
           echo ${p[@]}
         fi
       fi
@@ -1255,7 +1411,7 @@ list_partitions() {
 os_mount() {
   local device="$1"
 
-  if [ -z "$device" ]; then return 1;  fi
+  if [ -z $device ]; then return 1;  fi
   case $(get_OS) in
     macOS)
       sudo diskutil mount "$device"
@@ -1268,13 +1424,12 @@ os_mount() {
 #
 #      local label=$(get_volume_label)
 #      if [ -z "$volume_label"]; then
-#        error "os_mount: volume has no label, not mounted"
+#        _error "volume has no label, not mounted"
 #        return 1
 #      fi
 #      # -A automount=yes, see systemd-mount(1)
 #      sudo systemd-mount -A \
 #        --owner "$USER" -o rw "$device" "$volume_label"
-      sudo systemctl daemon-reload
       return 0
       ;;
     *)
@@ -1286,14 +1441,14 @@ os_mount() {
 os_unmount() {
   local device="$1"
 
-  if [ -z "$device" ]; then return 1;  fi
+  if [ -z $device ]; then return 1;  fi
   case $(get_OS) in
     macOS)
       sudo diskutil unmount "$device"
       ;;
     Linux)
       # See os_mount above.
-      sudo systemctl daemon-reload
+      sudo systemd-umount "$device"
       return 0
       ;;
     *)
@@ -1311,15 +1466,15 @@ add_to_fstab() {
   if [ "$#" -lt 2 ]; then
     # fstab entires must list the correct filesystem type or
     # they won't be honored by the system.
-    error "add_to_fstab: error misssing parameters"
+    _error "_error misssing parameters"
     return 1
   fi
   if grep -q -i "^UUID=$volume_uuid" /etc/fstab; then
     # XXX Add update of particulars
-    echo "add_to_fstab: $volume_uuid already exists"
+    _info "add_to_fstab: $volume_uuid already exists"
     return 0
   fi
-  echo "add_to_fstab: $volume_uuid $volume_name"
+#  _info "add_to_fstab: $volume_uuid $volume_name"
 
   case $(get_OS) in
     macOS)
@@ -1337,7 +1492,7 @@ GA
 UUID=$volume_uuid none $fs_type rw,noauto # "$volume_name" $device:wq
 EOF
       if [ $? -ne 0 ]; then
-        error "add_to_fstab: vifs failed"
+        _error "vifs failed"
         return 1
       fi
       return 0
@@ -1348,7 +1503,7 @@ EOF
       sudo sed -i "$ a UUID=$volume_uuid none $fs_type noauto 0 0 # \"$volume_name\" $device" /etc/fstab
 #EOF
       sudo systemctl daemon-reload
-      is_mounted "$device"
+      os_unmount "$device"
       return
       ;;
     *)
@@ -1363,7 +1518,7 @@ remove_from_fstab() {
 #  local fs_type="$3"
 
   if ! grep -q -i "^UUID=$volume_uuid" /etc/fstab; then
-    error "remove_from_fstab: $volume_uuid not found"
+    _error "$volume_uuid not found"
     return 1
   fi
 
@@ -1373,14 +1528,14 @@ remove_from_fstab() {
       # /<pattern> (go to line with pattern)
       # dd (delete line)
       # :wq (write & quit
-      echo "remove_from_fstab: $volume_uuid"
+      _info "$volume_uuid"
       EDITOR=vi
       sudo vifs <<EOF > /dev/null 2>&1
 /^UUID=$volume_uuid
 dd:wq
 EOF
       if [ $? -ne 0 ]; then
-        error "remove_from_fstab: vifs failed"
+        _error "vifs failed"
         return 1
       fi
       ;;
@@ -1388,7 +1543,6 @@ EOF
     Linux)
       sudo sed -E -i "/^UUID=$volume_uuid/d" /etc/fstab
       sudo systemctl daemon-reload
-      is_mounted "$device"
       return
       ;;
     *)
@@ -1405,26 +1559,26 @@ unmount_device() {
   #
   local partitions volume_uuid volume_name fs_type
   local result=0
+
   # Single partition vs a drive with possible multiple parts
   # device will be a /dev spec, but diskutil list doesn't include "/dev/"
-  local p r
+  local p
   partitions=( $(list_partitions "$device") )
-  echo "unmount_device: unmounting ${partitions[@]}"
+  _info "unmount_device: ${partitions[@]}"
   for (( p=0; p<${#partitions[@]}; p++ )); do
     local part=/dev/"${partitions[$p]}"
-#    echo -n "unmount_device: $part "
+    _DEBUG "unmount_device: $part"
 
     # If no volume UUID, there's no meaning to fstab entry.
     # Volume likely read-only or not at all.
     volume_uuid="$(get_volume_uuid $part)"
     if [ -z "$volume_uuid" ]; then continue; fi
 
-    volume_name="$(get_volume_name $part)"
+    _info "unmount_device: $volume_uuid"
     
+    volume_name="$(get_volume_name $part)"
     fs_type=$(get_fs_type "$part")
-
     add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
-    result+=$?
 
     # Ubuntu & Mint will mount and unmount devices automatically
     # with changes to /etc/fstab, above.
@@ -1433,11 +1587,12 @@ unmount_device() {
     # logic but including a UUID in /etc/fstab seems to reliably prevent
     # auto-mount.
     #
-    os_mount "$part"
-#    let result+=$?
+    os_unmount "$part"
+    ! is_mounted "$device" 
+    let result+=$?
   done
   echo "/etc/fstab:"
-  cat /etc/fstab; echo "-"
+  cat /etc/fstab; echo "done"
   return $result
 }
 
@@ -1448,25 +1603,34 @@ mount_device() {
   # If device is drive, do so for all its partitions
   local partitions volume_uuid volume_name
   local result=0
-#  echo "$device" "$(strip_partition_id "$device")"
+  _DEBUG "$device" "$(strip_partition_id "$device")"
   partitions=( $(list_partitions "$device") )
-  echo "mount_device: mounting ${partitions[@]}"
-  local p r=0
+  _info "mount_Device: ${partitions[@]}"
+  local p
   for (( p=0; p<${#partitions[@]}; p++ )); do
     local part=/dev/"${partitions[$p]}"
-#    echo -n "$part "
+    _DEBUG -n "$part "
 
     volume_uuid="$(get_volume_uuid $part)"
+    if [ -z "$volume_uuid" ]; then continue; fi
+    
+    _info "nmount_device: $volume_uuid"
+
     volume_name="$(get_volume_name $part)"
 
     remove_from_fstab "$volume_uuid" "$volume_name"
-    result+=$?
 
     os_mount "$part"
-    result+=$?
+
+# XXX Under systemd mounting is passive. When the device is referred to
+# XXX is receives its mountpoint. Running systemd-mount assigns it a
+# XXX mountpoint in /run/media/system, put this recinds it from the desktop
+# XXX systemd-umount will return it to the desktop.
+#    is_mounted "$device"
+#    let result+=$?
   done
   echo "/etc/fstab:"
-  cat /etc/fstab; echo "-"
+  cat /etc/fstab; echo "done"
   return $result
 }
 
@@ -1490,14 +1654,14 @@ fsck_device() {
   case $(get_OS) in
     macOS)
       partitions=( $(list_partitions "$device" true) )
-#      echo "$device" "$(strip_partition_id "$device")"
-#      echo ${partitions[@]}
+      _DEBUG "$device" "$(strip_partition_id "$device")"
+      _DEBUG ${partitions[@]}
 
       local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
         fs_type=$(get_fs_type "$part")
-        echo "fsck_device: $part" "$fs_type"
+        _DEBUG "$part" "$fs_type"
         case $fs_type in
           hfs)
             if ! $find_files; then
@@ -1533,47 +1697,112 @@ fsck_device() {
 
     Linux)
       partitions=( $(list_partitions "$device" true) )
-#      echo "$device" "$(strip_partition_id "$device")"
-#      echo ${partitions[@]}
+      _DEBUG "$device" "$(strip_partition_id "$device")"
+      _DEBUG ${partitions[@]}
 
       local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
         fs_type=$(get_fs_type "$part")
-        echo "fsck_device: $part" "$fs_type"
+        _DEBUG "$part" "$fs_type"
         case $fs_type in
           hfsplus)
             if ! which fsck.hfs; then
-              error "Need fsck for HFS+ (hfstools), skipping $part"
+              _error "Need fsck for HFS+ (hfstools), skipping $part"
               continue
             fi
-
-            if ! $find_files; then
-              sudo fsck.hfs -f -y "$device"
-            else
-              # On macOS -l "lock" must be used when mounted write
-#              cat $blocklist
+            if $find_files; then
               sudo fsck.hfs -n -l -B "$blocklist" "$device"
+            else
+              sudo fsck.hfs -f -y "$device"
             fi
             let result+=$?
             let nr_checked+=1
             ;;
           vfat)
-            sudo fsck -f -y "$part"
+            sudo fsck -a -l "$part"
             let result+=$?
             let nr_checked+=1
             ;;
           exfat)
             if ! which fsck.exfat; then
-              error "Missing fsck for exFAT (exfatprogs), skipping $part"
+              _error "Missing fsck for exFAT (exfatprogs), skipping $part"
               continue
             fi
-            sudo fsck.exfat -a "$part"
+            sudo fsck.exfat -p "$part"
+            let result+=$?
+            let nr_checked+=1
+            ;;
+          ntfs)
+            if ! which ntfsfix; then
+              _error "Missing ntfsfix / ntfsclusters (ntfsprogs), skipping $part"
+              continue
+            fi
+            if $find_files; then
+              local block count
+              cat "${blocklist}-EXTENTS" | \
+                while read block count; do
+                  sudo ntfscluster -s ${block}-$((block+count)) "$part" | \
+                    grep -F -v "inode found"
+                done
+              return
+            fi
+            # -d clear dirty if volume can be fixed and mounted
+            sudo ntfsfix -d "$part"
+            let result+=$?
+            let nr_checked+=1
+            ;;
+          ext[234])
+            if $find_files; then
+              local blocks=$(cat "${blocklist}" | tr '\n' ' ')
+              _DEBUG $blocks
+
+              # debugfs icheck finds corresponding inodes for a list of blocks
+              # Output looks like:
+              # "Block Inode"
+              # block-nr inode-nr
+              # block-nr "<no block found>" 
+              # ...
+              inodes=$(sudo debugfs -R "icheck $blocks" "$part" 2> /dev/null | \
+                awk -F'\t' '
+                  # Strip header and collect 2nd fields (inode number)
+                  # into an array
+                  NR > 1 { affected[$2]++; }
+                  # After all lines processed iterate over the inode array
+                  # casting out blocks with no inode.
+                  END {
+                    for (inode in affected) {
+                      if (inode == "<block not found>") {
+#                        printf("%d unallocated block\n", affected[in]) > "/dev/stderr";
+                         continue;
+                      }
+                      printf inode OFS;
+                    }
+                  }'
+              )
+              # strip trailing whitespace
+              inodes=$(echo $inodes)
+# Alternate
+#              inodes=$( \
+#                sudo debugfs -R "icheck $blocks" "$part" | \
+#                tail -n +2 | \
+#                sed -E '/[0-9]+\s+<block not found>/d' | \
+#                sed -E 's/([0-9]+\s+)([0-9]+)/\2/g' | \
+#                tr '\n' ' ' \
+#              )
+              _DEBUG $inodes
+
+              # debugfs ncheck prints path names for indodes.
+              #
+              sudo debugfs -R "ncheck -c $inodes" "$part"
+              return
+            fi
+            sudo fsck -f -p "$part"
             let result+=$?
             let nr_checked+=1
             ;;
           *)
-            echo "fsck_device Skipping $part, unknown filesystem"
+            echo "fsck_device Skipping $part, unknown filesystem ($fs_type)"
             ;;
         esac
       done
@@ -1604,7 +1833,7 @@ Do_Error_Files_Report=false
 Do_Slow_Files_Report=false
 #
 Do_Zap_Blocks=false
-Preview_Zap_Regions=false
+Preview_Zap_Regions=true
 #
 Opt_Trim=true
 Opt_Scrape=false
@@ -1627,7 +1856,7 @@ while getopts ":cfhmpsuzXZ" Opt; do
       # For use with a scan copy (-c where destination=/dev/null) disable
       # ddrescue trimming of region following read error.
       #
-      # With -N ddrescue will mark the block map at a read error as extending
+      # With -N ddrescue will mark the block map at a read _error as extending
       # for 64KiB (128 512-byte blocks).
       #
       # Skipping trimming can avoid waiting for additional read timeouts if the
@@ -1668,10 +1897,11 @@ while getopts ":cfhmpsuzXZ" Opt; do
     Z)
       # Overwite blocks in the device one at a time using an existing map
       Do_Zap_Blocks=true
+      Preview_Zap_Regions=false
       ;;
     *)
       usage
-      error "$(basename "$0"): Unknown option $1"
+      _info "$(basename "$0"): Unknown option $1"
       exit 1
       ;;
   esac
@@ -1684,7 +1914,7 @@ if ! $Do_Mount && ! $Do_Unmount && ! $Do_Fsck && \
    ! $Do_Error_Files_Report && ! $Do_Slow_Files_Report && \
    ! $Do_Zap_Blocks && \
    true; then
-  echo "$(basename "$0"): Nothing to do (-h for usage)"
+  _info "$(basename "$0"): Nothing to do (-h for usage)"
   exit 0
 fi
 
@@ -1697,12 +1927,12 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Zap_Blocks || \
      false; then
-    error "Incompatible options (1)"
+    _error "Incompatible options (1)"
     exit 1
   fi
 
   if [ $# -ne 1 ]; then
-    error "Missing or extra parameter (1)"
+    _error "Missing or extra parameter (1)"
     exit 0
   fi
 
@@ -1710,16 +1940,16 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Unmount; then
     if $Do_Mount; then
-      error "unmount: Incompatible options (1a)"
+      _error "Incompatible options (1a)"
       exit 1
     fi
     if ! is_device "$Device" false; then
-      error "unmount: No such device $Device"
+      _error "No such device $Device"
       exit 1
     fi
-    echo "unmount: Disable automount..."
+    _info "unmount: Disable automount..."
     if ! unmount_device "$Device"; then
-      error "unmount: Unmount(s) failed"
+      _error "Unmount(s) failed"
       exit 1
     fi
     exit 0
@@ -1727,7 +1957,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Mount; then
     if $Do_Unmount || $Do_Fsck; then
-      error "mount: Incompatible options (1b)"
+      _error "Incompatible options (1b)"
       exit 1
     fi
 
@@ -1744,12 +1974,12 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
       exit
     fi
     if ! is_device "$Device" false; then
-      error "mount: No such device $Device"
+      _error "No such device $Device"
       exit 1
     fi
-    echo "mount: Enable automount and mount..."
+    _info "Enable automount and mount..."
     if ! mount_device "$Device"; then
-      error "mount: errors occurred"
+      _error "errors occurred"
       exit 1
     fi
     exit 0
@@ -1757,7 +1987,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Fsck; then
     if $Do_Mount; then
-      error "fsck: Incompatible options (1c)"
+      _error "Incompatible options (1c)"
       exit 1
     fi
     fsck_device "$Device" false
@@ -1775,12 +2005,12 @@ if $Do_Smart_Scan; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Zap_Blocks || \
      false; then
-    error "smartscan: Incompatible options (2)"
+    _error "Incompatible options (2)"
     exit 1
   fi
 
   if [ $# -ne 1 ]; then
-    error "smartscan: Missing or extra parameters (2)"
+    _error "Missing or extra parameters (2)"
     exit 1
   fi
 
@@ -1793,7 +2023,7 @@ if $Do_Smart_Scan; then
   # XXX RELIABLY CREATE A FULL LIST OF BLOCKS
   # XXX Use ddrescue instead
   #
-  echo "smartscan: Deprecated, doesn't work"
+  _info "Deprecated, doesn't work"
   # Verify device is a drive not a partition
 #    smart_scan_drive "$device" "$smart_blocklist"
 
@@ -1808,26 +2038,26 @@ if $Do_Copy; then
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Zap_Blocks || \
      false; then
-    error "copy: Incompatible options (2)"
+    _error "Incompatible options (2)"
     exit 1
   fi
 
   if ! which ddrescue; then
-    error "ddrescue(1) not found on PATH"
+    _error "ddrescue(1) not found on PATH"
     error
-    error "You can obtain ddrescue using homebrew or macports"
-    error "If you are not familiar with packages on macUS, use Homebrew."
-    error "https://brew.sh/"
+    _error "You can obtain ddrescue using homebrew or macports"
+    _error "If you are not familiar with packages on macUS, use Homebrew."
+    _error "//brew.sh/"
     exit 1
   fi
 
   if [ $# -ne 3 ]; then
-    error "copy: Missing or extra parameters (2)"
+    _error "Missing or extra parameters (2)"
     exit 1
   fi
 
   if [[ "$Label" =~ ^/dev ]]; then
-    error "copy: Command line args reversed?"
+    _error "Command line args reversed?"
     exit 1
   fi
 
@@ -1852,108 +2082,108 @@ if $Do_Copy; then
   # Verify paths don't collide
   result=0
   if ! absolute_path "$Label" > /dev/null; then
-    error "copy: Invalid label path $Label"
+    _error "copy: Invalid label path $Label"
     let result+=1
   else
     Metadata_Path="$(absolute_path "$Label")"
   fi
   if ! absolute_path "$Copy_Source" > /dev/null; then
-    error "copy: Invalid source path $Copy_Source"
+    _error "copy: Invalid source path $Copy_Source"
     let result+=1
   else
     Copy_Source="$(absolute_path "$Copy_Source")"
   fi
   if ! absolute_path "$Copy_Dest" > /dev/null; then
-    error "Invalid destinationpath $Copy_Dest"
+    _error "copy: Invalid destinationpath $Copy_Dest"
     let result+=1
   else
     Copy_Dest="$(absolute_path "$Copy_Dest")"
   fi
-  echo "copy: Metadata path: $Metadata_Path"
-#  echo "copy: Source path: $Copy_Source"
-#  echo "copy: Dest path: $Copy_Dest"
+  _info "copy: Metadata path: $Metadata_Path"
+  _info "copy: Source path: $Copy_Source"
+  _info "copy: Dest path: $Copy_Dest"
   if [ $result -gt 0 ]; then exit 1; fi
 
   if [ "$Copy_Source" == "$Copy_Dest" ] || \
      [ "$Copy_Source" == "$Metadata_Path" ] || \
      [ "$Copy_Dest" == "$Metadata_Path" ]; then
-    error "copy: <label>, <source> and <destination> paths must differ"
+    _error "copy: <label>, <source> and <destination> paths must differ"
     exit 1
   fi
 
   # Map_File remains relative to the metadata directory, no harm no foul.
   # Source and destination paths are absolute to avoid hazards.
   if ! mkdir -p "$Label"; then
-    error "copy: Can't create a data dir for \"$Label\""
+    _error "copy: Can't create a data dir for \"$Label\""
     exit 1
   fi
-#  echo "copy: Matadata directory: ${Label}"
-  if ! cd "$Label"; then echo "Setup error (cd $Label)"; exit 1; fi
+  _DEBUG "copy: Matadata directory: ${Label}"
+  if ! cd "$Label"; then echo "Setup _error (cd $Label)"; exit 1; fi
 
   # Verify Copy_Source is eligible
   if is_device "$Copy_Source" false; then
     if device_is_boot_drive "$Copy_Source"; then
-      error "copy: Boot drive can't be used."
+      _error "copy: Boot drive can't be used."
       exit 1
     fi
   else
     if [ "$?" == "2" ]; then
       # Specs "/dev/" but no such device.
-      error "copy: $Copy_Source: device not found"
+      _error "copy: $Copy_Source: device not found"
       exit 1
     fi
     # Is file
     #
     if [ -d "$Copy_Source" ]; then
-      error "copy: Source cannot be a directory: $Copy_Source"
+      _error "copy: Source cannot be a directory: $Copy_Source"
       exit 1
     fi
     if ! resource_exists "$Copy_Source"; then
-      error "copy: No such file $Copy_Source"
+      _error "copy: No such file $Copy_Source"
       exit 1
     fi
     if _t="$(get_symlink_target "$Copy_Source")"; then
-      error "copy: Source cannot be symlink: $Copy_Source -> $_t"
+      _error "copy: Source cannot be symlink: $Copy_Source -> $_t"
       exit 1
     fi
     if _t="$(get_alias_target "$Copy_Source")"; then
-      error "copy: Source cannot be alias: $Copy_Source -> $_t"
+      _error "copy: Source cannot be alias: $Copy_Source -> $_t"
       exit 1
     fi
-    echo "copy: Source is a file: $Copy_Source"
+    _info "copy: Source is a file: $Copy_Source"
   fi
 
   # Verify Copy_Dest is eligible
   if is_device "$Copy_Dest" false; then
     if device_is_boot_drive "$Copy_Dest"; then
-      error "copy: Boot drive can't be used."
+      _error "copy: Boot drive can't be used."
       exit 1
     fi
     # Continue
   else
     if [ "$?" == "2" ]; then
       # Specs "/dev/" but no such device.
-      error "copy: $Copy_Dest: device not found"
+      _error "copy: $Copy_Dest: device not found"
       exit 1
     fi
     # Is file
     if [ -d "$Copy_Dest" ]; then
-      error "copy: Destionation cannot be a directory: $Copy_Dest"
+      _error "copy: Destionation cannot be a directory: $Copy_Dest"
       exit 1
     fi
     if [ "$Copy_Dest" == "/dev/null" ]; then
-      echo "copy: Destination is /dev/null (scanning)"
+      _info "copy: Destination is /dev/null (scanning)"
     else
       if _t="$(get_symlink_target "$Copy_Dest")"; then
-        error "copy: Destination cannot be symlink: $Copy_Dest -> $_t"
+        _error "copy: Destination cannot be symlink: $Copy_Dest -> $_t"
         exit 1
       fi
       if _t="$(get_alias_target "$Copy_Dest")"; then
-        error "copy: Destination cannot be alias: $Copy_Dest -> $_t"
+        _error "copy: Destination cannot be alias: $Copy_Dest -> $_t"
         exit 1
       fi
       Opt_Scrape=true
-      echo "copy: Destination is a file: $Copy_Dest"
+      _info "copy: Destination is a file: $Copy_Dest"
     fi
   fi
 
@@ -1963,21 +2193,21 @@ if $Do_Copy; then
     if ! resource_matches_map "$Copy_Source" "$Map_File"; then
       # XXX Can't distingush between source and dest in the map.
       # XXX IF src /dst were reversed this would still pass.
-      error "copy: Existing block map ($Label) but not for $Copy_Source"
+      _error "copy: Existing block map ($Label) but not for $Copy_Source"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
     if resource_matches_map "$Copy_Dest" "$Map_File"; then
       if [ "$Copy_Dest" != "/dev/null" ] && \
          [ ! -s "$Copy_Dest" ]; then
-        error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
+        _error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
         exit 1
       fi
       # XXX Fair assumption
       # XXX Could compare the first N blocks of source / dest to verify
       continuing=true
     else
-      error "copy: Existing block map ($Label) not for this destination"
+      _error "copy: Existing block map ($Label) not for this destination"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
@@ -1987,7 +2217,7 @@ if $Do_Copy; then
     #
     if [ -f "$Copy_Source" ] && [ -f "$Copy_Dest" ] && [ $continuing ]; then
       if [ $(stat -f %m "$Copy_Source") -gt $(stat -f %m "$Copy_Dest") ]; then
-        error "copy: Block map exists and source is newer than destinmation, quitting"
+        _error "copy: Block map exists and source is newer than destinmation, quitting"
         exit 1
       fi
     fi
@@ -1996,11 +2226,11 @@ if $Do_Copy; then
   # Unlikely edge case of hard links to same file
   if [ -f "$Copy_Source" ] && [ -f "$Copy_SDest" ]; then
     if [ "$(get_inode "$Copy_Source")" == "$(get_inode "$Copy_Dest")" ]; then
-      error "copy: source & destination are same file (inode: $(get_inode "$Copy_Dest"))"
+      _error "copy: source & destination are same file (inode: $(get_inode "$Copy_Dest"))"
       exit 1
     fi
   fi
-  
+
   if $continuing; then
     echo "RESUMING COPY"
   elif is_device "$Copy_Dest" false || \
@@ -2008,23 +2238,23 @@ if $Do_Copy; then
     echo 'copy: *** WARNING DESTRUCTIVE ***'
     read -r -p "copy: OVERWTIE ${Copy_Dest}? [y/N] " response
     if [[ ! $response =~ ^[Yy]$ ]]; then
-       echo "copy: ...STOPPED."
+       _info "copy: ...STOPPED."
        exit 1
     fi
   fi
 
   if is_device "$Copy_Source" && ! unmount_device "$Copy_Source"; then
-    error "copy: Unmount failed $Copy_Source"
+    _error "copy: Unmount failed $Copy_Source"
     exit 1
   fi
   if is_device "$Copy_Dest" && ! unmount_device "$Copy_Dest"; then
-    error "copy: Unmount failed $Copy_Dest"
+    _error "copy: Unmount failed $Copy_Dest"
     exit 1
   fi
 
   if ! run_ddrescue "$Copy_Source" "$Copy_Dest" "$Map_File" \
             "$Event_Log" "$Rate_Log" "$Opt_Trim" "$Opt_Scrape"; then
-    error "copy: something went wrong"
+    _error "copy: something went wrong"
     exit 1
   fi
 
@@ -2040,13 +2270,13 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Mount || $Do_Unmount || $Do_Fsck || \
      $Do_Copy || $Do_Smart_Scan || \
      false; then
-    error "Incompatible options (3)"
+    _error "Incompatible options (3)"
     exit 1
   fi
 
   # Need a label and metadata
   if [ $# -ne 2 ]; then
-    error "Missing or extra parameters (3)"
+    _error "Missing or extra parameters (3)"
     exit 1
   fi
 
@@ -2068,33 +2298,35 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
   Rate_Log="$Label.rate-log" # Incremeted if exists
   Error_Files_Report="$Label.FILES-REPORT-ERROR"
   Slow_Files_Report="$Label.FILES-REPORT-SLOW"
+  Partition_Offset=0
+  Device_Blocksize=""
+  Fs_Blocksize=""
 
   if ! cd "$Label" > /dev/null 2>&1; then
-    error "No metadata found ($Label)"; exit 1;
+    _error "report/zap: No metadata found ($Label)"; exit 1;
   fi
 
   if [[ "$Label" =~ ^/dev ]]; then
-    error "Command line args reversed?"
+    _error "report/zap: Command line args reversed?"
     exit 1
   fi
 
   if ! is_device "$Device" false; then
     if [ -f "$Device" ]; then
-      error "Reports can't be run on plain files (examine the rate log)"
+      _error "report/zap: Can't report on files (examine the rate log)"
       exit 1
     fi
-    error "report: No such device ($Device)"
+    _error "report/zap: No such device ($Device)"
     exit 1
   fi
-
-  # Don't accept the startup drive or regaulr files
+  # Don't accept the startup drive
   if device_is_boot_drive "$Device"; then
-    error "Boot drive can't be used."
+    _error "report/zap: Boot drive can't be used."
     exit 1
   fi
 
   if [ ! -s "$Map_File" ]; then
-    error "report: No ddrescue block map ($Label). Create with -c"
+    _error "rreport/zap: No ddrescue block map ($Label). Create with -c"
     exit 1
   fi
 
@@ -2111,12 +2343,12 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
         #
         x="$(strip_partition_id "$Device")"
         if ! resource_matches_map "$x" "$Map_File"; then
-          error "report: Existing block map ($Label) but not for $Device"
+          _error "report: Existing block map ($Label) but not for $Device"
           get_commandline_from_map "$Map_File"
           exit 1
         fi
       else
-        error "report: Existing block map ($Label) but not for $Device"
+        _error "report: Existing block map ($Label) but not for $Device"
         get_commandline_from_map "$Map_File"
         exit 1
       fi
@@ -2125,64 +2357,94 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
 
   if $Do_Error_Files_Report || $Do_Slow_Files_Report; then
 
-    if ! is_hfsplus "$Device"; then
-      error "report: Must be an hfsplus partition"
+    if ! is_hfsplus "$Device" && \
+       ! is_ext "$Device" && \
+       ! is_ntfs "$Device"; then
+      _error "report: Usupported volume type ($(get_fs_type "$Device")) req. HFS+, NTFS, ext2, ext3, ext4"
       exit 1
     fi
     if ! resource_matches_map "$Device" "$Map_File" &&
        ! resource_matches_map "$(strip_partition_id "$Device")" "$Map_File";
        then
-      error "report: Existing block map ($Label) but not for $Device"
+      _error "report: Existing block map ($Label) but not for $Device"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
 
+    # <device> is a partition, but map may be for a drive.
+    #
+    # Filesystem reports (fsck/debugfs/ntfscluster) expect block
+    # addresses to be partition relative.
+    #
+    # If <device> is a drive then an offset is needed.
+    #
+    if [ "$Device" != "$(get_device_from_ddrescue_map "$Map_File")" ]; then
+      # Correspondence to the map was checked coming in,
+      # so assume the map is for a whole drive, so compute offset.
+      Partition_Offset=$(get_partition_offset "$Device")
+      if [ -z $Partition_Offset ] || [ $Partition_Offset -eq 0 ]; then
+        _info "report: partition offset fail"
+        return 1
+      fi
+    fi
+    _info "PARTITION OFFSET: $Partition_Offset blocks ($(get_device_blocksize "$Device") bytes per block)"
+
     if $Do_Error_Files_Report; then
 
-      create_ddrescue_error_blocklist "$Device" "$Map_File" "$Error_Fsck_Block_List"
+      # Report on stdout and saved in report file
+      create_ddrescue_error_blocklist \
+        "$Device" \
+        "$Map_File" \
+        "$Error_Fsck_Block_List" \
+        "$Partition_Offset"
 #      cat "$Error_Fsck_Block_List"
-
       fsck_device "$Device" true "$Error_Fsck_Block_List" | \
         tee "$Error_Files_Report"
-      echo "report: files affected by errors: $Label/$Error_Files_Report"
-      
+      _info "report: files affected by errors: $Label/$Error_Files_Report"
+
     elif $Do_Slow_Files_Report; then
 
-      create_slow_blocklist "$Device" "$Map_File" "$Rate_Log" "$Slow_Fsck_Block_List"
+      # Report on stdout and saved in report file
+      create_slow_blocklist \
+        "$Device" \
+        "$Rate_Log" \
+        "$Slow_Fsck_Block_List" \
+        "$Partition_Offset" \
+        1000000
 #      cat "$Slow_Fsck_Block_List"
-
       fsck_device "$Device" true "$Slow_Fsck_Block_List" | \
         tee "$Slow_Files_Report"
-      echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
+      _info "report: files affected by slow reads: $Label/$Slow_Files_Report"
 
     else
-      error "report: MAINLINE GLITCH, SHOULD NOT HAPPEN"
+      _error "report: MAINLINE GLITCH, SHOULD NOT HAPPEN"
     fi
 
-    # Report on stdout and saved in report file
     exit
   fi
 
   if $Do_Zap_Blocks; then
     if [ ! -s "$Map_File" ]; then
-      error "zap: No block map ($Label). Create with -c"
+      _error "zap: No block map ($Label). Create with -c"
       exit 1
     fi
     # Drive or parition, the device and the map must agree.
     if ! resource_matches_map "$Device" "$Map_File";
        then
-      error "zap: Existing block map ($Label) but not for $Device"
+      _error "zap: Existing block map ($Label) but not for $Device"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
-    echo "zap: Umount and prevent automount..."
+    _info "zap: Umount and prevent automount..."
     if ! unmount_device "$Device"; then
-      error "zap: Unmount failed"
+      _error "zap: Unmount failed"
       exit 1
     fi
 
-    zap_from_mapfile "$Device" "$Map_File" \
-                     "$Zap_Block_List" $Preview_Zap_Regions
+    zap_from_mapfile "$Device" \
+                     "$Map_File" \
+                     "$Zap_Block_List" \
+                     $Preview_Zap_Regions
   fi
 
 fi
