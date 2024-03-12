@@ -1720,6 +1720,10 @@ fsck_device() {
             let nr_checked+=1
             ;;
           vfat)
+            if ! which fsck.fat; then
+              _error "Missing fsck for FAT (dosfstools), skipping $part"
+              continue
+            fi
             sudo fsck -a -l "$part"
             let result+=$?
             let nr_checked+=1

@@ -2,16 +2,18 @@
 
 **`ddrescue-helper.sh`** is a helper script for running GNU ddrescue.
 
-It's currently oriented to macOS and HFS+ volumes. But is written to be extended to other file systems. Coding for Linux is under way.
+It currently runs on macOS and Linux Ubuntu and Mint (Debian).
 
 It can:
 
-- Unmount (persistent), re-mount, and fsck of volumes based on volume UUID.
-- Copy (or scan) of storage devices to create a bad block map and rate log (metadata) which are stored in a named directory.
-- Report files affected by errors or slow reads (for macOS HFS+ volumes)
-- Zap sectors in error regions to try to trigger a spinning drive to re-allocate sectors.
+- UNMOUNT, MOUNT, and FSCK volumes om a partition or whole drive basis.
+  Unmount is persistent based on fstab & volume UUID.
+- COPY (or SCAN) a drive, partition or file using ddrescue, creating a BAD BLOCK MAP and read RATE LOG (METADATA) which are stored in a named directory.
+- Use copy/scan metadata to REPORT files affected by read errors or slow reads:
+  - macOS HFS+ and Linux NTFS, ext2/3/4, and HFS+ (via hfsutils)
+- ZAP device blocks which generated read error to trigger a spinning drive to re-allocate them.
 
-By hiding details of the ddrescue command line, ensuring that source and destination volumes remain unmounted, and performaning simple consistency checks, it makes using ddrescue a bit easier.
+It helps by hiding details of the ddrescue command, ensuring that source and destination volumes remain unmounted, and performaning simple consistency checks to make using ddrescue easier and more effective.
 
 > [!IMPORTANT]
 > The script was developed using bash v3.2, which should be compatible with older systems. But it was made on macOS Ventura and hasn't been tested on other macOS versions. If Apple has changed output formats of information from `diskutil` it may not work properly.
@@ -23,6 +25,10 @@ GNU ddrescue is a tool for copying storage devices (drives, partitions, or files
 A side effect of running ddrescue is the creation of two kinds of metadata for the copy source:
 - A "domain map" of device regions with read errors and their extents;
 - A rate log of read performance measured second-by-second.
+
+### ABOUT FILESYSTEM SUPPORT PACKAGES FOR LINUX
+
+See the following packages: `hfsutils`, `exfatprogs`, `dosfstools`, and `ntfsprogs`. All are available as packages if not already installed.
 
 GNU ddrescue can be installed on macOS using `macports` or `homebrew`
 
@@ -97,10 +103,14 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 `-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate to check / repair volume integiru after making a copy or zapping.
 
 > [!NOTE]
+> If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted, but this is the common case.
+>
+> On macOS, containers are observed.
+>
 > With `-m`, you can supply a volume UUID as `<device>`to remove an entry from /etc/fstab (no attemt to mount is made). An `/etc/fstab` entry can become orphaned if unmounted with `-u` after which the parition is reformatted or overwritten as a copy destination. You also can run `vifs` to do anything you want to `/etc/fstab` by hand.
 >
-> If you need a general purpose mount inhibitor for macOS, which works for all devices, includeing disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
-> However, Disk Arbitrator hasn't been updated since 2017 and on macOS Ventura a bug prevents it its Quit from working, you have to kill it by hand.
+> If you need a general purpose mount inhibitor for macOS which works for all devices, includeing disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
+> Note: Disk Arbitrator hasn't been updated since 2017. On macOS Ventura it works to properly inbitit automounts, but a UI bug prevents its Quit from working, so you have to kill it by hand.
 
 ### 2. SCAN, COPY
 
@@ -120,7 +130,7 @@ Runs `ddrescue` to scan a device or recover data, generating a map of read error
 
 - Image a drive or partition to a file.
 
-- Copy a file.
+- Copy a file to another file.
 
 `-X` enables `ddrescue` scraping for scan, to try to refine the resolution of affected blocks. Scan scraping is disabled by default to save some time getting block list for use with `-p` and `-s`. See the GNU ddrescue manual.
 
@@ -144,6 +154,7 @@ These functions utilize the `ddrescue` block map data resulting from copy / scan
 
 > [!WARNING] 
 > THERE ARE NO SANITY CHECKS FOR ZAP — USE WITH GREAT CAUTION.
+> ZAPPING TO A RAID SOUNDS LIKE A BAD IDEA.
 
 > [!TIP] 
 > If you have bad-block or slow-read metadata for an entire drive, you can use it with `-p` and `-s` which are partition (volume) oriented. The needed partition offset will be calculated automatically and applied to the blocks list used to generatie the reports.
