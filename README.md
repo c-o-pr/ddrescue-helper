@@ -2,21 +2,34 @@
 
 **`ddrescue-helper.sh`** is a helper script for running GNU ddrescue.
 
-It currently runs on macOS and Linux Ubuntu and Mint (Debian).
+It currently runs on macOS and Ubuntu.
 
-It can:
+# SUMMARY & PURPOSE
+
+- Do you have spinning hard drives that are suffering from occasional read errors?
+- Do you wish to keep using these drives?
+- Do you want to know which files are affected by read errors?
+  (macOS HFS+, Linux NTFS, ext2/3/4, and HFS+)
+- Do you want to know which files are affected by slow reads? (Ditto)
+- Do you want to do a best-effort clone of a whole drive, a partition, or some files affected by read errors?
+- Do you wonder if you can get the drive to re-allocate blocks causing read errors?
+
+Ddrescue-helper.sh can help. It's a bash script for running GNU ddrescue on macOS and Ubuntu + Mint (modern Linux distros tha handle mountpoints via systemd and udev) that can:
 
 - UNMOUNT, MOUNT, and FSCK volumes om a partition or whole drive basis.
-  Unmount is persistent based on fstab & volume UUID.
-- COPY (or SCAN) a drive, partition or file using ddrescue, creating a BAD BLOCK MAP and read RATE LOG (METADATA) which are stored in a named directory.
-- Use copy/scan metadata to REPORT files affected by read errors or slow reads:
-  - macOS HFS+ and Linux NTFS, ext2/3/4, and HFS+ (via hfsutils)
-- ZAP device blocks which generated read error to trigger a spinning drive to re-allocate them.
+  where unmount is persistent based on fstab entry for the volume UUID.
+- COPY (or SCAN) a drive, partition or file using ddrescue, creating a BAD BLOCK MAP and READ RATE LOG (METADATA) which get stored in a named directory.
+- Report files affected by read errors and slow-reads using copy/scan metadata.
+  (macOS HFS+, Linux NTFS, ext2/3/4, and HFS+)
+- ZAP device blocks associated with read errors to trigger a spinning drive to re-allocate them. This has the potential to regain access to a drive that is otherwise unmountable.
 
-It helps by hiding details of the ddrescue command, ensuring that source and destination volumes remain unmounted, and performaning simple consistency checks to make using ddrescue easier and more effective.
+Ddrescue-helper.sh helps by hiding details of the ddrescue command, ensuring that source and destination volumes remain unmounted during clone operations, and performaning simple consistency checks to make using ddrescue easier and more effective.
 
 > [!IMPORTANT]
-> The script was developed using bash v3.2, which should be compatible with older systems. But it was made on macOS Ventura and hasn't been tested on other macOS versions. If Apple has changed output formats of information from `diskutil` it may not work properly.
+> The script was developed using bash v3.2, on macOS Ventura.
+> It's been tested on 10.14 Mojave.
+> It has been tested on Ubuntu 23.10 and Mint 21.2.
+> Major Linux dependencies are on use of udev and systemd to handle mounts.
 
 ### ABOUT GNU DDRESCUE
 
@@ -194,6 +207,8 @@ This helper is macOS / HFS+ centric, but the script is made so support can be ad
 
 **General**
 
+- [ ] XXX Add system detection of ddrescue version or options
+- [ ] XXX Add detection of Linux systemd support for auto-unmounting
 - [ ] XXX Reports incomsistent about inclusion of all blocks vs. summary between macOS and Linux.
 - [ ] XXX For partitions, check that device partition label matches the map.
 - [ ] ADD Improve situational awareness of the EFI service partition
