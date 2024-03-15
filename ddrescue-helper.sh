@@ -1,4 +1,7 @@
 #!/bin/bash
+# ddrexcue-helper.sh
+# https://github.com/c-o-pr/ddrescue-helper
+
 #set -x
 TRACE=false
 
@@ -6,136 +9,156 @@ usage() {
   cat << USAGE
 $(basename "$0") Usage:
 
-  WARNING! DESTRUCTIVE TO DATA!
-  BEFORE USING READ THE DOCUMENTATION FOR GNU ddrescue.
-  STUDY THIS USAGE CAREFULLY BEFORE USING -Z
+  -u | -m | -f   <device>
+     :: UNMOUNT / MOUNT / FSCK
 
-  -m | -u | -f <device>
-    :: unmount / mount / fsck
+     <device> is a /dev entry for an block storage device.
 
-    With -m, <device> can be a UUID to be removed from /etc/fstab.
-    In certain use cases, an /etc/fstab entry for a volume UUID can end
-    up orphaned.
+     If <device> is a whole drive, all its partitions are affected. -m and -u
+     ignore the EFI Service Parition (first partition of GPT dformat rive).
+
+     FSCK works with the following volume types
+       macOS: FAT, ExFAT, HFS+, APFS
+       Limux: ext2/3/4, FAT, ExFAT, NTFS, HFS+
+
+     With -m, <device> can be a UUID to be removed from /etc/fstab with no
+     corresponding drive. In certain use cases, an /etc/fstab entry for a volume
+     UUID can end up orphaned.
 
   -c [ -X ] <label> <source> <destination>
-    :: copy
+     :: COPY / SCAN with ddrescue
 
-    Use /dev/null for <destination> to scan <source> producing
-    a map and rate log.
+     <label> Name for a directory created to contain ddrescue map and log data.
 
-  -p | -s | -z | -Z <label> <device>
-    :: print affected files reports / zap-blocks
+     <source> <destination> /dev block storage devices or regular files.
 
-    -p [SAFE] report files affected by read errors in map data.
-    -s [SAFE] report files affected by slow reads in rate log.
+     DATA AT <destination> ARE OVERWRITTEN WITH DATA FROM <source>
 
-    -z Zap preview. Print a list of block regions that will nbe zapped,
-       but don't zap them. Examine the list to sanity check before -Z.
-    -Z [DANGEROUS] Overwrite drive blocks at _error regions specified by map data
-       to help trigger <device> to re-allocate underlying sectors.
+     If <source> and <destinatio> are /dev entries for block storage devices
+     <destination> becomes a clone of <source>.
 
-  <label> Name for a directory created to contain ddrescue map and log data.
+     If <source> is a /dev and <destination> is a regular file <destination>
+     becomes an (image) of <source>
 
-  <device> /dev entry for an block storage device.
-    IMPORTANT: See description below.
+     Use /dev/null for <destination> to SCAN <source> producing a bad block map
+     and rate log without making any COPY.
 
-    On macOS, use the "rdisk" form of the device special file to get
-    full speed access (e.g., /dev/rdisk17).
+     On macOS, use the "rdisk" form of the /dev to get full speed access (e.g.,
+     /dev/rdisk17).
 
-    If <device> is a whole drive, all its partitions are affected.
-    Except for -m and -u which ignore EFI service parition.
+  -p | -s | -z | -Z   <label> <device>
+     :: REPORT affected files / ZAP-blocks
 
-  <source> <destination> regular file or /dev block storage device.
+     -p REPORT files affected by read errors in MAP data.
+     -s REPORT files affected by slow reads in the ddrescue rate log.
+          macOS: HFS+
+          Linux: ext2/3/4. NTFS, HFS+
 
-    If <destination> is a regular file it becomes an (image) of <source>
-    If <destinatio> is a /dev entry for an block storage device it becomes a
-    clone of <source>.
+     -z ZAP PREVIEW. Print a list of block regions that will be ZAPPED,
+        but don't ZAP them. Examine the preview as a sanity check before -Z.
 
-    DATA AT <destination> is OVERWRITTEN WIth DATA FROM <source>
+     -Z ZAP. Overwrite drive blocks specified by map data to help trigger
+       <device> to re-allocate underlying sectors. The block is read tested and
+       only written if the read fails.
 
-  DESCRIPTION
-  Create and use ddrescue block map data to address bad blocks
-  and locate files in partitions (HFS+) assocated with the bad blocks.
+  SUMMARY GUIDE
 
-  -u Unmount <device> partition(s) and prevent auto-moounting.
-     The GPT EFI partition is not included as it is not normally auto-mounted.
-     If device is a drive, all its partitions are unmouonted including
-     APFS containers.
+  The main point of this helper is making ddrescue easier to use to create a
+  reliable COPY a drive or partition (or file) when source media errors are
+  interfering with conventional copies. Making an COPY is an obvious important
+  first step to recovery from bad blocks.
 
-  -m Undo autmount prevention and remount drive or partition on <device>.
+  For some filesystems (noted above) the block data can be used to REPORT
+  files affected by read errors and slow reads.
 
-  -f Fsck. Check and repair partitions (HFS+).
+  Bad blocks can be ZAPPED which may trigger a spinning drive to re-allocated
+  them. This may be able to return a drive with a small number of baad blocks to
+  service. The risk of ZAPPING is low because the blocks are already unreadable.
+  However, whem bad blocks get re-allocated, this can lead to subsequent events
+  which are dangerous to data if the bad blocks were occupied by key filesystem
+  metadata.
 
-  -c Copy <source> to <destination> using ddrescue to build metadata for
-     unreadable (bad) blocks (block map) and create a rate log.
+  Note that the concern for making a COPY is completely seperable from the
+  concerns of REPORTs about affected-files and ZAPPING.
 
-     Metadata including the block map for the copy is placed in a subdir
-     named <label> in the current working dir.
+  -u UNMOUNT prevents auto-moounting. This is critical to ensure the integrity
+  of COPY. If <device> is a drive, all its partitions are unmouonted (including
+  APFS containers on macOS). The GPT EFI partition is not included as it is not
+  normally auto-mounted.
 
-     <destination> can be /dev/null, in which case the effect is a "scan"
-     for read errors on <source> to produce the block for use with
-     -p -s -z and -Z.
+  -m MOUNT disables auto-mount prevention and remounts partition(s).
 
-     If existing block map data for <label>, <source> and <destination>
-     is present, copying resumes until ddrescue determines the disposition
-     of all blocks in the source, subject to limits on scripting.
-     (ddescue "finished").
+  -f FSCK checks and repairs supported volumes on partitions. Use FSCK after
+  copy on <destination> if there were read errors. If you are attempting to
+  return a drive to service with ZAP, you may want to check source too, although
+  not necessarily. You need to think through your recovery intentions to
+  determine any next step.
 
-     Existing block map data ets a simple sanity-check that it pertains
-     to the specfied <source> and <destinatio>.
+  -c COPY <source> to <destination> using ddrescue to build metadata for
+  unreadable (bad) blocks (block map) and create a rate log. Metadata including
+  the block map for the COPY is placed in a LABELed sub directory <label> in the
+  current working directory. Existing MAP metadata for LABEL are sanity-checked
+  against the specfied <source> and <destinatio>. Existing MAP metadata are used
+  to determine if a COPY is resuming.
 
-     Copy implies unmount (-u) <source> and <destination>.
-     Mounting (-m) after copy must be performed explicitly.
+  <destination> can be /dev/null, to SCAN for read errors on <source> producing
+  the MAP data for use with -p -s REPORT -z and -Z ZAP.
 
-     The metadata created by any -c for drvies and partitions
-     can be used by -p -s -z and -Z. When the source is a file, it may be
-     interesting to know which blocks are affected by these are logical blocks
-     within the file, not device blocks.
+  COPY implies UNMOUNT <source> and <destination>. MOUNT after COPY must be
+  performed explicitly.
 
-     By default -c when <destination> is /dev/null (scan) doesn't scrape
-     to avoid waiting for additional reads in likely bad areas that aren't
-     likely to change afftect files reporting. Enable scan scrape with -X.
+  If there is existing block MAP data for the combination of <label>, <source>
+  and <destination> present, COPY resumes until ddrescue determines the
+  disposition of all blocks in the source.
 
-     The boot drive cannot used (altoough maybe it should be allowed for scan).
+  The MAP metadata created by COPY for drvies and partitions can be used for
+  REPORT and ZAP. When the source is a file, it may be interesting to know which
+  blocks are affected, but the map is for logical blocks within the file, not
+  device blocks.
 
-  -X Enable ddrescue "scrape" during scan. See GNU ddrescue doc.
+  By default SCAN doesn't "scrape" to avoid waiting for additional reads in
+  likely bad areas that aren't likely to change afftect files REPORT. Enable
+  SCAN scrape with -X. See the GNU ddrescue documentation.
 
-  -p Report for HFS+ partition of files affected by _error regions
-     listed in the ddrescue map for <label>. Affected files can be
-     restored from backup or rescued individually using this helper.
+  The boot drive cannot used (altoough maybe it should be allowed for SCAN).
 
-  -s Report for HFS+ partition of files affected by regions of
-     slow reads as listed in the ddrescue rate log for <label>
-     (slow is less than 1 MB/s). Affected files can be set aside to avoid
-     further dependency on that drive region.
+  REPORT (-p -s) affected files based on errors or slow reads recorded MAP
+  metadata. <device> must a partition (e.g. /dev/rdisk2s2) with a supported
+  filesystem. MAP metadata can wither for the partition or for the  whole drive
+  (e.g. /dev/rdisk2). If <device> is for a partition, but the map is  for a
+  whole ddrive, the necessary offset for proper location of files will be
+  automatically calculated.
 
-     For print, <device> must a HFS+ partition (e.g. /dev/rdisk2s2),
-     but block map data can wither for the partition or for the
-     whole drive (e.g. /dev/rdisk2). If <device> is for a partition,
-     but the map is for a whole ddrive, the necessary offset for
-     proper location of files will be automatically calculated.
+  Affected files can be restored from backup or rescued individually
+  using this helper. The can also be set aside to prevent reuse of those blocks
+  by the file system. (Slow is less than 1 MB/s).
 
-     Map data from an unfinished copy can be used with -p and -s with the
-     obvious caveat of missing infomration.
+  ZAP (-Z) blocks listed as errors in an existing block map. This uses dd to
+  write specific discrete blocks in an attempt to make the drive re-allocate
+  them. ZAP attempts to read and writes only if the read fails.
 
-  -z Print a preview of _error blocks to be zapped, allowing you to sanity check
-     the implications before actually zapping with -Z. For example, if you
-     have errors in the first 40 512-byte blocks for a GPT drive, you will
-     overwrite the drive's partition table, so make a copy of
-     the backup partition table first (beyond the scope of this help).
+  For old versions of dd or systems which don't support the idirect and odirect
+  flags, you may need to consider the effects of OS caching.
 
-  -Z Zap blocks listed as errors in an existing block map.
-     Uses dd to write specific discrete blocks in an attempt
-     to make the drive re-allocate them.
+  ZAP PREVIEW (-z) of lets you to sanity check the implications before running
+  ZAP.
 
-    Map data from an unfinished copy or scan can be used with -p -s -z -Z,
-    assuming any bad blocks or slow areas have been recorded.
+  MAP metadata from an unfinished COPY or DCAN can be used with REPORT and ZAP.
 
-  REQUIRES
+  DEPENDS ON
     Bash V3+
-    GNU ddrescue: [ macports | brew ] install ddrescue
-    fsck(8) - mac builtin
-    diskutil(8) - mac builtin
+
+    GNU ddrescue
+      macOS: Use [ macports | brew ] install ddrescue
+      Linux: Available via standard repositories.
+
+    Linux systemd / udev
+
+    macOS includes FSCK support for  HFS+, msdos, and ExFAT volumes.
+    macOS REPORT supports HFS+.
+
+    Linux FSCK and REPORT depend on hfsutils, exfatprogs, dosfstools, and
+    ntfsprogs. All available as packages from the standard repositories.
 
   SEE
     GNU ddrescue Manual
@@ -189,7 +212,7 @@ _error() {
   local caller=$( [ ${FUNCNAME[1]} != "main" ] && \
                   echo "${FUNCNAME[1]}:" || \
                   echo "" )
-  _color_fx_wrapper "$_cfx_error" echo '***' "$caller $@" >&2
+  _color_fx_wrapper "$_cfx_error" echo '***'"$caller $@" >&2
 }
 _warn() {
   _color_fx_wrapper "$_cfx_warn" "${@}"
@@ -211,25 +234,20 @@ if which tput > /dev/null && \
     # Bash goofiness to preserve input param grouping
     # Get a local array of all params with ""s:
     local color="$1"
-    local command="$2"
-    local format="$3"
     local ary=( "${@}" )
     # Use array indexing to shift out first 2 elements and preserve ""s
-    local remainder=( "${ary[@]:3}" );
+    local ary=( "${ary[@]:1}" );
     # Use color for info messaging
     tput setaf "$color"
-    $command "$format" "${remainder[@]}"
+    # Output command
+    "${ary[@]}"
     tput sgr0
   }
 else
   _color_fx_wrapper() {
-    local color="$1"
-    local command="$2"
-    local format="$3"
     local ary=( "${@}" )
-    # Use array indexing to shift out first 2 elements and preserve ""s
-    local remainder=( "${ary[@]:3}" );
-    $command "$format" "${remainder[@]}"
+    local ary=( "${ary[@]:1}" );
+    "${ary[@]}"
   }
 fi
 
@@ -462,7 +480,7 @@ zap_from_mapfile() {
     fi
   }
   if [ $? -ne 0 ]; then return 1; fi
-  
+
   # Verify action
   local block count total_blocks=0
   if $preview; then
@@ -477,7 +495,7 @@ zap_from_mapfile() {
        exit 1
     fi
   fi
-  
+
   # Do zap
   cat "$zap_blocklist" | \
   { \
@@ -1286,9 +1304,9 @@ is_device() {
       ;;
     Linux)
       if $quiet; then
-        lsblk -f "$device" > /dev/null
+        lsblk -o NAME,FSTYPE,SIZE,LABEL,MOUNTPOINT,UUID "$device" > /dev/null
       else
-        lsblk -f "$device"
+        lsblk -o NAME,FSTYPE,SIZE,LABEL,MOUNTPOINT,UUID "$device"
       fi
       ;;
     *)
@@ -1652,7 +1670,7 @@ remove_from_fstab() {
 #  local volume_name="$2"
 #  local fs_type="$3"
 
-  if ! grep -q -i "^UUID=$volume_uuid" /etc/fstab; then
+  if ! grep -E -q -i "^(UUID=)*$volume_uuid" /etc/fstab; then
     _error "$volume_uuid not found"
     return 1
   fi
@@ -1666,7 +1684,7 @@ remove_from_fstab() {
       _info echo "$volume_uuid"
       EDITOR=vi
       sudo vifs <<EOF > /dev/null 2>&1
-/^UUID=$volume_uuid
+/$volume_uuid
 dd:wq
 EOF
       if [ $? -ne 0 ]; then
@@ -1727,7 +1745,7 @@ unmount_device() {
     let result+=$?
   done
   _info echo "/etc/fstab:"
-  cat /etc/fstab | sed 's/^/  /'
+  _advise cat /etc/fstab
   return $result
 }
 
@@ -1765,7 +1783,7 @@ mount_device() {
 #    let result+=$?
   done
   _info echo "/etc/fstab:"
-  cat /etc/fstab | sed 's/^/  /'
+  _advise cat /etc/fstab
   return $result
 }
 
@@ -1868,7 +1886,7 @@ fsck_device() {
               _error "Missing fsck for exFAT (exfatprogs), skipping $part"
               continue
             fi
-            sudo fsck.exfat -p "$part"
+            sudo fsck.exfat -p -s "$part"
             let result+=$?
             let nr_checked+=1
             ;;
@@ -2109,7 +2127,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
       # Just remove it from /etc/fstab
       remove_from_fstab "$_uuid"
       _info echo "/etc/fstab:"
-      cat /etc/fstab | sed 's/^/  /'
+      _advise cat /etc/fstab
       exit
     fi
     if ! is_device "$Device" false; then
@@ -2228,7 +2246,7 @@ if $Do_Copy; then
   Metadata_Path=""
 
   Copying=false
-  Continuing=false
+  Resuming=false
 
   if [[ "$Label" =~ ^/dev ]]; then
     _error "Command line args reversed?"
@@ -2343,7 +2361,7 @@ if $Do_Copy; then
     fi
   fi
 
-  # Determine status: first-run or continuing.
+  # Determine status: first-run or resuming.
   if [ -s "$Map_File" ]; then
 
     if ! resource_matches_map "$Copy_Source" "$Map_File"; then
@@ -2369,7 +2387,7 @@ if $Do_Copy; then
 
       # XXX Fair assumption
       # XXX Could compare the first N blocks of source / dest to verify
-      Continuing=true
+      Resuming=true
     else
       _error "copy: Existing block map ($Label) not for this destination"
       get_commandline_from_map "$Map_File"
@@ -2379,7 +2397,7 @@ if $Do_Copy; then
     #
     # For files, check mtimes and reject if source is newer than dest
     #
-    if [ -f "$Copy_Source" ] && [ -f "$Copy_Dest" ] && [ $Continuing ]; then
+    if [ -f "$Copy_Source" ] && [ -f "$Copy_Dest" ] && [ $Resuming ]; then
       if [ $(stat -f %m "$Copy_Source") -gt $(stat -f %m "$Copy_Dest") ]; then
         _error "copy: Block map exists and source is newer than destinmation, quitting"
         exit 1
@@ -2395,7 +2413,7 @@ if $Do_Copy; then
     fi
   fi
 
-  if $Continuing; then
+  if $Resuming; then
     echo "RESUMING COPY"
   elif is_device "$Copy_Dest" false || \
        [[ ! "$Copy_Dest" =~ ^/dev/null$ && -s "$Copy_Dest" ]]; then
@@ -2526,13 +2544,6 @@ if $Do_Error_Files_Report || $Do_Slow_Files_Report || \
        ! is_ext "$Device" && \
        ! is_ntfs "$Device"; then
       _error "report: Usupported volume type ($(get_fs_type "$Device")) req. HFS+, NTFS, ext2, ext3, ext4"
-      exit 1
-    fi
-    if ! resource_matches_map "$Device" "$Map_File" &&
-       ! resource_matches_map "$(strip_partition_id "$Device")" "$Map_File";
-       then
-      _error "report: Existing block map ($Label) but not for $Device"
-      get_commandline_from_map "$Map_File"
       exit 1
     fi
 
