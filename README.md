@@ -221,6 +221,10 @@ This helper is macOS / HFS+ centric, but the script is made so support can be ad
 
 **General**
 
+- [ ] ADD Mount device to chosen dir
+- [ ] ADD Option to ZAP if READ test succeeds
+- [ ] XXX Ensure no volume metadata dependencies for pathological case.
+- [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive
 - [ ] ADD auto-detection and installation of supporting tools on Linux.
 - [ ] XXX Test zap of a file
 - [ ] ADD Linux UUID reset (macOS tools are unreliable)
@@ -315,7 +319,10 @@ interactions with systemd, etc.
 
 ## TODOs Robustness
 
-- [ ] XXX The -Z zap read test relies on dd exit status. Better to inspect the block read for contents
+- [ ] XXX Option handling is bone-headed, refactor
+- [ ] XXX is_device() (actual) needs to be distinguished from is /dev
+- [ ] XXX CHECK FOR EXISTING MATCHING MAP CAN'T DETECT source V. destination reversal or ambiguity.
+- [ ] XXX The -Z zap read test relies on dd exit status. Better to inspect the block read for contents?
 - [ ] ADD Regression test suite
 - [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the map file due to ambiguous whitespace
 - [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+ (Linux?). CCC used to offer a helper; now it's a UI option.
