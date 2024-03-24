@@ -229,9 +229,9 @@ EOF
 }
 
 usage_packages() {
-  _advise "You can obtain packages using apt (Linux) homebrew or macports (macOS)"
-  _advise "If you unfamiliar with packages on macOS, use Homebrew."
-  _advise "https://brew.sh/"
+  _advise echo "You can obtain packages using apt (Linux) or with homebrew or macports (macOS)"
+  _advise echo "If you unfamiliar with packages on macOS, use Homebrew."
+  _advise echo "https://brew.sh/"
 }
 
 #######################################
@@ -485,7 +485,7 @@ zap_sequence() {
   _info printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
 
   while [ "$c" -le "$count" ]; do
-    printf "  %d [0x%X] read " "$block" "$block"
+    printf "  %d [0x%X] read" "$block" "$block"
 #    debug -n "$block read "
 #    let t=$(date +%s)+2
     read_block "$target" "$block" "$direct_option" "$K4"  > /dev/null 2>&1
@@ -494,23 +494,23 @@ zap_sequence() {
 #    debug $t $t2
 #    if [ $result -ne 0 ] || [ $t -lt $t2 ]; then
     if [ $result -ne 0 ]; then
-      echo -n "FAILED ($result), write "
+      echo -n " FAILED ($result), write"
       write_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1
       sleep 0.1
       result=$?
       if [ "$result" -ne 0 ] ; then
-        echo -n "FAILED ($result)"
+        echo -n " FAILED ($result)"
       else
-        echo -n "re-read "
+        echo -n ", re-read"
         if ! read_block "$target" "$block" "$direct_option" "$K4" \
                > /dev/null 2>&1; then
-          echo -n "FAILED"
+          echo -n " FAILED"
         else
-          echo -n "OK"
+          echo -n " OK"
         fi
       fi
     else
-      echo -n "OK"
+      echo -n " OK"
     fi
     let block+=1
     let c+=1
@@ -527,7 +527,7 @@ zap_from_mapfile() {
   local K4="${5:-false}"
 
   local blocksize=512
-  if $K4; then blocksize=$((blocksize*8)); fi
+  if $K4; then blocksize=4096; fi
   
   # First do no harm
   if [ "$preview" != "true" ] && \
@@ -537,6 +537,13 @@ zap_from_mapfile() {
   fi
   _info echo "zap_from_mapfile: blocklist: $zap_blocklist"
   _info echo "zap_from_mapfile: blocksize: $blocksize"
+  if ! $preview; then
+    if dd_supports_direct_io "$device"; then
+      _info echo "USING DIRECT I/O: true"
+    else
+      _info echo "USING DIRECT I/O: false"
+    fi
+  fi
 
   # Parse map for zap
   extract_error_extents_from_map_file "$map_file" | \
@@ -604,18 +611,31 @@ zap_from_mapfile() {
        exit 1
     fi
   fi
-  escalate
   # Do zap
   if $preview; then
     printf "%12s %4s %11s %5s\n" "Block" "Count" "(hex)"
+  else
+    escalate
   fi
   cat "$zap_blocklist" | \
   { \
     while read block count; do
       let total_blocks+=$count
       if $preview; then
-        printf "%12d %-4d %#12x %#5.3x\n" \
-          "$block" "$count" "$block" "$count"
+        #### For debugging 4K arithmetic
+#          local b local c
+#          if $K4; then
+#            let bs=block*8
+#            let be=(block+count)*8
+#          else
+#            let bs=block
+#            let be=(block+count)
+#          fi
+#          printf "%12d %-4d %#12x %#5.3x  [%d->%d  %#x->%#x]\n" \
+#            "$block" "$count" "$block" "$count" "$bs" "$be" "$bs" "$be"
+        ####
+         printf "%12d %-4d %#12x %#5.3x\n" \
+           "$block" "$count" "$block" "$count"
       else
         zap_sequence "$device" "$block" "$count" "$K4"
       fi
@@ -627,13 +647,13 @@ zap_from_mapfile() {
   return 0
 }
 
-zap_from_smart() {
-  return 1
-}
-
 #####################################
 # FUNCTIONS FOR SMART BLOCK REPORTING
 #####################################
+
+zap_from_smart() {
+  return 1
+}
 
 start_smart_selftest() {
   echo "Starting long self test"
@@ -709,27 +729,13 @@ sanity_check_blocklist() {
   # At least check for very low and very high numbered blocks
   # relative to the device range.
   case $(get_device_type "$device") in
-    file)
-      return 0
-      ;;
-    GPT)
-      return 0
-      ;;
-    hfs)
-      return 0
-      ;;
-    apfs)
-      return 0
-      ;;
-    ext*)
-      return 0
-      ;;
-    msdos)
-      return 0
-      ;;
-    ntfs)
-      return 0
-      ;;
+    file) return 0 ;;
+    GPT) return 0 ;;
+    hfs) return 0 ;;
+    apfs) return 0 ;;
+    ext*) return 0 ;;
+    msdos) return 0 ;;
+    ntfs) return 0 ;;
     *)
       _info echo "unknown device type $device_type"
       return 1
@@ -768,6 +774,9 @@ extents_to_list() {
 ddrescue_map_extents_bytes_to_blocks() {
   local blocksize="${1:-512}"
 
+  # This code depends on the input being a monotonically increasing list of
+  # block addrs and lengths.
+  #
   # Convert hex map data for byte addresses and extents
   # into decimal blocks.
   # Input (512):
@@ -777,18 +786,62 @@ ddrescue_map_extents_bytes_to_blocks() {
   #   4      1
   # 0 or 0 are skipped
   #
-  _DEBUG "blocksize $blocksize"
+  _DEBUG "blocksize: $blocksize"
+
+  # Input addresses are bytes but naturally aligned to blocks because drive I/O
+  # are LBAs, typically 512 bytes.
+  #
   local addr len
+  if (( blocksize == 512 )); then
+    # Simply divide to convert to blocks.
+    while read addr len x; do
+      addr=$(( addr / blocksize ))
+      len=$(( (len + blocksize - 1) / blocksize ))
+      echo $addr $len
+    done
+    exit
+  fi
+
+  # When comverting to 4096 byte blocks, handle 512 byte block extents which 
+  # overlap within 4096 byte blocks.
+  local prev_addr prev_len next_addr a l
+
+  # Read ahead 1 extent to permit detection of overlap by next extent. Must
+  # calculate extents in bytes (or 512 blocks) then convert to 4096 blocks as
+  # last step to properly account for overlap.
+  read addr len x
+  prev_addr=$addr
+  prev_len=$len
+  next_addr=$((prev_addr + prev_len))
+#  echo NEXT $next_addr 1>&2
+  remainder=false
   while read addr len x; do
-#    _DEBUG input $addr $len
-    addr=$(( addr / blocksize ))
-    len=$(( (len + blocksize - 1 ) / blocksize ))
-    # Edge case handled elsewhere
-#    if  (( addr == 0 || len == 0 )); then continue; fi
-    # decimal
-    echo $addr $len
-#    _DEBUG output $addr $len
+    if (( addr > next_addr )); then
+      # The current extent doesn't overlap the previous so output previous.
+      a=$(( prev_addr / blocksize ))
+      l=$(( (prev_len + blocksize - 1) / blocksize ))
+#      echo $prev_addr $prev_len
+      echo $a $l
+      prev_addr=$addr
+      prev_len=$len
+      remainder=false
+    else
+      # The cuurent extent overlaps the previous, so accumulate its length.
+#      echo ADDR $addr $len 1>&2
+      prev_len=$((prev_len + (next_addr - addr) + len))
+      remainder=true
+    fi
+    next_addr=$((addr + len))
+#    printf "%#7x, %d, %6d, %#12x\n" $prev_len $addr $len $next_addr 1>&2
+#    echo NEXT $N 1>&2
   done
+#  echo $prev_addr $prev_len
+  if $remainder; then
+    # Finish up last extent
+    a=$(( prev_addr / blocksize ))
+    l=$(( (prev_len + blocksize - 1) / blocksize ))
+    echo $a $l
+  fi
 }
 
 parse_ddrescue_map_for_fsck() {
@@ -2378,7 +2431,6 @@ if $Do_Copy; then
 
   if ! which ddrescue; then
     _error "ddrescue(1) not found on PATH"
-    _error
     usage_packages
     echo
     exit 1
@@ -2818,7 +2870,6 @@ if \
 
   if ! which gnuplot > /dev/null; then
     _error "gnuplot(1) not found on PATH"
-    _error
     usage_packages
     echo
     exit 1
