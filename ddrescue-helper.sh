@@ -84,10 +84,10 @@ DESCRIPTION
 
   sudo mount -t <fs-type> -o uid=$USER,gid=$USER,force,rw <device> <directory>
 
-  MOUNT will accept a UUID without a <device> and remove an /etc/fstab entry 
-  with that UUID. This is an alternative to editing /etc/fstab by hand when 
+  MOUNT will accept a UUID without a <device> and remove an /etc/fstab entry
+  with that UUID. This is an alternative to editing /etc/fstab by hand when
   an entry becomes orphaned.
-  
+
   FSCK (-f) checks and repairs supported volumes on partitions. You may, or may
   not, want to use FSCK on <destination> if there were read errors during copy.
   If you are attempting to return a drive to service with ZAP, you may want to
@@ -111,11 +111,11 @@ DESCRIPTION
   REPORT and ZAP.
 
   COPY implies UNMOUNT of <source> and <destination>. MOUNT after COPY must be
-  performed explicitly. 
+  performed explicitly.
 
   The boot drive is not allowed with COPY. (Maybe it should be allowed for
   SCAN).
-  
+
   -X Enables SCAN "scrape." See the GNU ddrescue documentation. To save time for
   SCAN, scrape is disabled by default, avoiding waiting for additional reads in
   bad areas that aren't likely to change the error afftected-files REPORT. SCAN
@@ -128,7 +128,7 @@ DESCRIPTION
   Run ddrescue-helper again with the parameters to resume.
 
   The MAP metadata created by COPY for drives and partitions feeds REPORT, PLOT
-  and ZAP. It's unclear if bad block reallocations can be triggered through file 
+  and ZAP. It's unclear if bad block reallocations can be triggered through file
   ZAP but it's allowed.
 
   REPORT (-p, -s) lists files affected by errors or slow reads recorded in the
@@ -479,7 +479,7 @@ zap_sequence() {
   local c=1
   local direct_option=false
   # Older dd doesn't support i/oflag
-  if dd_supports_direct_io; then direct_option=true; fi  
+  if dd_supports_direct_io; then direct_option=true; fi
   _info echo "USING DIRECT I/O: $direct_option"
 
   _info printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
@@ -528,7 +528,7 @@ zap_from_mapfile() {
 
   local blocksize=512
   if $K4; then blocksize=4096; fi
-  
+
   # First do no harm
   if [ "$preview" != "true" ] && \
      [ "$preview" != "false" ]; then
@@ -802,7 +802,7 @@ ddrescue_map_extents_bytes_to_blocks() {
     exit
   fi
 
-  # When comverting to 4096 byte blocks, handle 512 byte block extents which 
+  # When comverting to 4096 byte blocks, handle 512 byte block extents which
   # overlap within 4096 byte blocks.
   local prev_addr prev_len next_addr a l
 
@@ -852,7 +852,7 @@ parse_ddrescue_map_for_fsck() {
   local fs_blocksize="${5:-4096}" # For ext2/3/4 reports, req debugfs
 
   _info echo "FS BLOCKSIZE: $fs_blocksize" 1>&2
-  
+
   # Pull a list of _error extents from the map
   # convert them from byte to block addresses
   # and emit a list of corresponding blocks.
@@ -1132,7 +1132,7 @@ run_ddrescue() {
   # For rescue, apply trim and scrape to salvage as much data as possible
   local trim="${6:-true}"
   local scrape="${7:-false}"
-  
+
   local result
   local shim_script="./ddrescue-shim.sh"
   make_ddrescue_shim "$shim_script"
@@ -1206,17 +1206,17 @@ flush_device() {
       sudo purge
       ;;
     Linux)
-      _info echo -n "flush_device: $device: " 
+      _info echo -n "flush_device: $device: "
       _info echo -n "sync"
       sync
-      _info echo -n ", drop caches"    
+      _info echo -n ", drop caches"
       echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
       _info echo -n ", flushbufs"
       sudo blockdev --flushbufs $device
       # Flush device onboard buffer, if supported by drive
       _info echo -n ", flush drive, "
       sudo hdparm -F $device
-      _info echo "done" 
+      _info echo "done"
       ;;
     *)
       return 1
@@ -1422,7 +1422,7 @@ get_fs_blocksize_for_file_lookup() {
       ;;
     Linux)
       if [[ "$(get_fs_type "$device")" =~ ext[234] ]]; then
-        # Ext2/3/4 
+        # Ext2/3/4
         sudo blkid -p -o value --match-tag FSBLOCKSIZE "$device"
       else
         echo $(get_device_blocksize "$device")
@@ -1945,7 +1945,7 @@ unmount_device() {
   # device will be a /dev spec, but diskutil list doesn't include "/dev/"
   local p
   partitions=( $(list_partitions "$device") )
-  if [ "${#partitions[@]}" -gt "1" ]; then 
+  if [ "${#partitions[@]}" -gt "1" ]; then
     _info echo "unmount_device: ${partitions[@]}"
   fi
   for (( p=0; p<${#partitions[@]}; p++ )); do
@@ -2500,7 +2500,7 @@ if $Do_Copy; then
     exit 1
   fi
 
-  # Ensure the path for the metadata isn't on a mountpoint for either device. 
+  # Ensure the path for the metadata isn't on a mountpoint for either device.
   if check_mount "$(dirname $Metadata_Path)" "$Copy_Source" || \
      check_mount "$(dirname $Metadata_Path" "$Copy_Dest)"; then
     _error "copy: Metadata may not saved on source or destination"
@@ -2665,7 +2665,7 @@ if $Do_Copy; then
   if [ -s "$Map_File" ]; then
     _info echo "copy: Map saved in $Label/$Map_File";
   fi
-  
+
   cleanup
   exit 0
 fi
@@ -2812,7 +2812,7 @@ if \
         tee "$Error_Files_Report"
       _info echo "report: files affected by errors: $Label/$Error_Files_Report"
     fi
-    
+
     if $Do_Slow_Files_Report; then
       # Report on stdout and saved in report file
       create_slow_blocklist \
@@ -2922,7 +2922,7 @@ if \
      set ylabel \"Rate\nMB/s\"; \
      plot \"-\" using 1:2 title \"$Label\" pt \"|\"" | \
     tee "$Rate_Plot_Report"
-    
+
     _info echo "Plot saved to $Label/$Rate_Plot_Report"
 
 #     set xtics format \"\"; \
