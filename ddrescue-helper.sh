@@ -282,7 +282,7 @@ _error() {
   local caller=$( [ ${FUNCNAME[1]} != "main" ] && \
                   echo "${FUNCNAME[1]}:" || \
                   echo "" )
-  _color_fx_wrapper "$_cfx_error" echo '***'"$caller $@" >&2
+  _color_fx_wrapper "$_cfx_error" echo '***' "$caller $@" >&2
 }
 _warn() {
   _color_fx_wrapper "$_cfx_warn" "${@}"
@@ -307,7 +307,7 @@ if which tput > /dev/null && \
     # Have to cast as array to use array shift
     local ary=( "${@}" )
     # Use array indexing to shift out first 2 elements, preserve "" grouping
-    local ary=( "${ary[@]:1}" );
+    ary=( "${ary[@]:1}" );
     # Use color for info messaging
     tput setaf "$color"
     # Output remainder of command
@@ -319,7 +319,7 @@ else
   # Output is not a terminal
   _color_fx_wrapper() {
     local ary=( "${@}" )
-    local ary=( "${ary[@]:1}" );
+    ary=( "${ary[@]:1}" );
     "${ary[@]}"
   }
 fi
@@ -402,8 +402,8 @@ is_uuid() {
       return 1
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 
   return 1
@@ -418,8 +418,8 @@ dd_supports_direct_io() {
       dd --help | grep -F "direct I/O" > /dev/null 2>&1
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -436,8 +436,8 @@ read_block() {
   local direct_option="${3:-true}"
   local K4="${4:-false}"
 
-  local option=""
-  if $direct_option; then option="iflag=direct"; fi
+  local option="iflag=sync"
+  if $direct_option; then option+=",direct"; fi
 
   local blocksize=512
   if $K4; then blocksize=4096; fi
@@ -456,16 +456,16 @@ write_block() {
   local direct_option="${3:-true}"
   local K4="${4:-false}"
 
-  local option=""
-  if $direct_option; then option="oflag=noatime,direct"; fi
+  local option="oflag=sync"
+  if $direct_option; then option+=",direct"; fi
 
   local blocksize=512
   if $K4; then blocksize=4096; fi
 
-  sudo dd bs=$blocksize count=1 conv=notrunc oseek="$block" \
+#cat >&2 <<EOF
+  sudo dd status=none bs=$blocksize count=1 conv=notrunc oseek="$block" \
     if=/dev/zero of="$target" $option
-#  sudo dd status=none bs=512 count=1 conv=notrunc oseek="$block" \
-#    if=/dev/zero of="$target" $option
+#EOF
 }
 
 zap_sequence() {
@@ -478,9 +478,6 @@ zap_sequence() {
   local max=3
   local c=1
   local direct_option=false
-  # Older dd doesn't support i/oflag
-  if dd_supports_direct_io; then direct_option=true; fi
-  _info echo "USING DIRECT I/O: $direct_option"
 
   _info printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
 
@@ -488,22 +485,22 @@ zap_sequence() {
     printf "  %d [0x%X] read" "$block" "$block"
 #    debug -n "$block read "
 #    let t=$(date +%s)+2
-    read_block "$target" "$block" "$direct_option" "$K4"  > /dev/null 2>&1
+    read_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1
     result=$?
 #    t2=$(date +%s)
 #    debug $t $t2
 #    if [ $result -ne 0 ] || [ $t -lt $t2 ]; then
     if [ $result -ne 0 ]; then
       echo -n " FAILED ($result), write"
-      write_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1
-      sleep 0.1
+      write_block "$target" "$block" "$direct_option" "$K4" # > /dev/null 2>&1
+#      sleep 0.1
       result=$?
       if [ "$result" -ne 0 ] ; then
         echo -n " FAILED ($result)"
       else
         echo -n ", re-read"
-        if ! read_block "$target" "$block" "$direct_option" "$K4" \
-               > /dev/null 2>&1; then
+        read_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1;
+        if ! $?; then
           echo -n " FAILED"
         else
           echo -n " OK"
@@ -559,7 +556,11 @@ zap_from_mapfile() {
     return 1
   fi
 
-  # Count blocks for sanity check
+  local device_format="$(get_device_format "$device")"
+  if [ -z "$device_format" ]; then
+    exit 1
+  fi
+  # Count blocks and sanity check
   cat "$zap_blocklist" | \
     {
     local _max_blocks=2000
@@ -569,19 +570,20 @@ zap_from_mapfile() {
     local format_error=false
     while read block count; do
       if [ -z $block ] || [ -z $count ]; then
-        _error "zap_from_mapfile: block list format error"
+        _error "block list format error"
         format_error=true
       fi
       if [ $count -eq 0 ]; then
-        _error "zap_from_mapfile: zero length extent"
+        _error "zero length extent"
         format_error=true
       fi
-      if [ $block -lt 41 ]; then
-       _error "A block address is in the partition table"
-        address_error=true
+      if ! sanity_check_block_range \
+              "$device_format" "$block" "$count" "$K4"; then
+        _warn "bad block(s) in partition table or volume header"
+#        address_error=true
       fi
       if [ $count -gt "$_max_extent" ]; then
-        _advise echo "*** zap_from_mapfile: Extent > $_max_extent blocks"
+        _warn echo "*** zap_from_mapfile: Extent > $_max_extent blocks"
       fi
       let total_count+=$count
     done
@@ -598,7 +600,7 @@ zap_from_mapfile() {
   }
   if [ $? -ne 0 ]; then return 1; fi
 
-  # Verify action
+  # Verify with user
   local block count total_blocks=0
   if $preview; then
     _info echo "zap_from_mapfile: ZAP PREVIEW: $Device"
@@ -715,23 +717,53 @@ smart_scan_drive() {
   done
 }
 
-###############################################
-# FUNCTIONS FOR BLOCK LISTS FOR REPORTS AND ZAP
-###############################################
+############################################
+# FUNCTIONS FOR BLOCK LISTS, REPORTS AND ZAP
+############################################
 
-sanity_check_blocklist() {
-  local blocklist="$1"
-  local device="$2"
+sanity_check_block_range() {
+  local device_format="$1"
+  local block="$2"
+  local count="$3"
+  local K4="${4:-false}"
 
   # XXX NOT YET USED
   # Populate with checks for metadata areas that could be catastrophic
   # to overwrite, like the partition table, superblock, etc.
   # At least check for very low and very high numbered blocks
   # relative to the device range.
-  case $(get_device_type "$device") in
+  case "$device_format" in
     file) return 0 ;;
-    GPT) return 0 ;;
-    hfs) return 0 ;;
+    gpt)
+      local device_size="$(get_device_size "$device")"
+      if ! $K4; then
+        if (( block <= 40 )) || \
+           (( block >= device_size - 41 )); then
+          return 1
+        fi
+      else
+        if (( block <= 40 / 8)) || \
+           (( block >= (device_size / 8) - (41 / 8) )); then
+          return 1
+        fi      
+      fi
+      return 0
+      ;;
+    mbr) return 0 ;;
+    hfsplus)
+      local device_size="$(get_device_size "$device")"
+      if ! $K4; then
+        if (( block <= 2 )) || \
+           (( block >= device_size - 2 )); then
+          return 1
+        fi
+      else
+        if (( block == 0 )) || \
+           (( block == (device_size / 8) - 1  )) ; then
+          return 1
+        fi
+      fi
+      ;;
     apfs) return 0 ;;
     ext*) return 0 ;;
     msdos) return 0 ;;
@@ -1041,7 +1073,8 @@ event_log="$4"
 rate_log="$5"
 trim="${6:-true}"
 scrape="${7:-false}"
-user="${8:-$USER}"
+K4="${8:-false}"
+user="${9:-$USER}"
 
 next_rate_log_name() {
   local rate_log="$1"
@@ -1080,7 +1113,7 @@ if $missing; then
   echo "$(basename "$0"): missing parameter(s)"
   echo "  source=\"$1\" dest=\"$2\" map_file=\"$3\""
   echo "  event_log=\"$4\" rate_log=\"$5\""
-  echo "  scrape_opt=\"$6\" trim_opt=\"$7\" user=\"$8\""
+  echo "  scrape_opt=\"$6\" trim_opt=\"$7\" K4=\"$8\" user=\"$9\""
   exit 1
 fi
 
@@ -1090,9 +1123,11 @@ fi
 # -N no trim
 # -T Xs Maximum time since last successful read allowed before giving up.
 # -r x read retries
+# -b sector size
 opts="-f -T 10m -r0"
 if ! $trim; then opts+=" -N"; fi
 if ! $scrape; then opts+=" -n"; fi
+if $K4; then opts+=" -b 4096"; fi
 opts+=" --log-events=$event_log"
 
 tries=0
@@ -1132,6 +1167,7 @@ run_ddrescue() {
   # For rescue, apply trim and scrape to salvage as much data as possible
   local trim="${6:-true}"
   local scrape="${7:-false}"
+  local K4="${8:-false}"
 
   local result
   local shim_script="./ddrescue-shim.sh"
@@ -1139,7 +1175,7 @@ run_ddrescue() {
   _DEBUG "$(pwd)"
   sudo "$shim_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
-       "$trim" "$scrape" "$USER"
+       "$trim" "$scrape" "$K4" "$USER"
   result=$?
   return $result
 }
@@ -1166,7 +1202,7 @@ resource_matches_map() {
       return 1
     fi
   else
-    _info echo "$map_file" > /dev/stderr
+    _info echo "$map_file" >&2
     return 1
   fi
 }
@@ -1184,7 +1220,7 @@ get_device_from_ddrescue_map() {
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
   if [ -z $x ]; then
-    _error "map device = \"\"" > /dev/stderr
+    _error "map device = \"\"" 
     exit 1
   fi
   echo "$x"
@@ -1219,8 +1255,8 @@ flush_device() {
       _info echo "done"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1236,8 +1272,8 @@ get_inode() {
       stat --printf %i "$path"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1254,8 +1290,8 @@ get_symlink_target() {
       return 1
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1284,11 +1320,12 @@ get_alias_target() {
       return 1
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
+cat > /dev/null <<"EOF"
 get_partition_table_type() {
   local device="$1"
 
@@ -1301,10 +1338,11 @@ get_partition_table_type() {
       lsblk --raw -n -d -o PTTYPE "$device"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
+EOF
 
 get_partition_uuid() {
   local device="$1"
@@ -1320,8 +1358,8 @@ get_partition_uuid() {
       return 1
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1349,8 +1387,8 @@ get_volume_uuid() {
       fi
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1367,27 +1405,63 @@ get_volume_name() {
       lsblk -n -d -o LABEL "$device"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
-get_fs_type() {
+get_device_format() {
   local device="$1"
+
+  # OUTPUT: file, gpt, mbr, hfsplus, ntfs, msdos, exfat, ext2/3/4, apfs
+  #
+  # XXX vfat for all versions of FAT with LFN (long filename) support;
+  # XXX msdos for all versions of FAT without LFN support (8.3-only).
+
+  local format
+  if [ -f "$device" ]; then echo "file"; return 0; fi
 
   case $(get_OS) in
     macOS)
-      diskutil info "$device" | \
-        grep "Type (Bundle):" | \
-        sed -E 's/^.+: *([a-z]+) *$/\1/'
+      # If drive, get format
+      if [ "$device" == "$(strip_partition_id "$device")" ]; then
+        format="$( diskutil info "$device" | \
+                   grep -F "Content (IOContent):" | \
+                   sed -E 's/^.+: *([-_A-Za-z ]+)$/\1/' | \
+                   sed -e 's/FDisk_partition_scheme/mbr/' \
+                       -e 's/GUID_partition_scheme/gpt/' )"
+      else
+        # Is volume
+        format="$( diskutil info "$device" | \
+          grep -F "Type (Bundle):" | \
+          sed -E 's/^.+: *([a-z]+) *$/\1/' | \
+            sed 's/hfs/hfsplus/' )"
+      fi
       ;;
     Linux)
-      lsblk -n -d -o FSTYPE "$device"
+      # If drive, get format
+      if [ "$(strip_partition_id "$device")" == "$device" ]; then
+        format="$( lsblk -n -d -o PTTYPE "$device" | \
+                   sed -e 's/dos/mbr/' )"
+      else
+        # Is volume
+        format="$( lsblk -n -d -o FSTYPE "$device" | \
+                   tr 'A-Z' 'a-z' | \
+                   sed -e 's/vfat/msdos/' \
+                   )"
+      fi
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
+
+  if [ -z "$format" ]; then
+    _error "unknown format $device" 
+    return 1
+  fi
+  echo "$format"
+  
 }
 
 get_device_blocksize() {
@@ -1404,8 +1478,8 @@ get_device_blocksize() {
       lsblk --raw -n -d -o PHY-SEC "$device" # --raw no whitespace
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1421,7 +1495,7 @@ get_fs_blocksize_for_file_lookup() {
         sed -E 's/^.+: *([0-9]+).*$/\1/'
       ;;
     Linux)
-      if [[ "$(get_fs_type "$device")" =~ ext[234] ]]; then
+      if [[ "$(get_device_format "$device")" =~ ext[234] ]]; then
         # Ext2/3/4
         sudo blkid -p -o value --match-tag FSBLOCKSIZE "$device"
       else
@@ -1429,15 +1503,15 @@ get_fs_blocksize_for_file_lookup() {
       fi
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
 is_gpt() {
   local device="$1"
 #  _info echo \"$(get_partition_table_type "$device")\" >&2
-  [ "$(get_partition_table_type "$device")" == "gpt" ]
+  [ "$(get_device_format "$device")" == "gpt" ]
 }
 
 is_mounted() {
@@ -1456,8 +1530,8 @@ is_mounted() {
       return
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1469,11 +1543,11 @@ is_hfsplus() {
       diskutil info "$device" | grep -q Apple_HFS
       ;;
     Linux)
-      [ "$(get_fs_type "$device")" == "hfsplus" ]
+      [ "$(get_device_format "$device")" == "hfsplus" ]
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1485,11 +1559,11 @@ is_ntfs() {
       diskutil info "$device" | grep -q NTFS
       ;;
     Linux)
-      [ "$(get_fs_type "$device")" == "ntfs" ]
+      [ "$(get_device_format "$device")" == "ntfs" ]
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1501,11 +1575,11 @@ is_ext() {
       return 1
       ;;
     Linux)
-      [[ "$(get_fs_type "$device")" =~ ^ext[234]$ ]]
+      [[ "$(get_device_format "$device")" =~ ^ext[234]$ ]]
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1540,19 +1614,21 @@ is_device() {
       fi
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
-get_partition_offset() {
+get_device_offset() {
   local device="$1"
+
+  # Output in 512 byte blocks
 
   local offset
   case $(get_OS) in
     macOS)
       offset=$( diskutil info "$device" | \
-        grep "Partition Offset" | \
+        grep -F "Partition Offset:" | \
         sed -E 's/^.*\(([0-9]*).*$/\1/' )
       ;;
     Linux)
@@ -1560,15 +1636,42 @@ get_partition_offset() {
       offset=$(lsblk -n -d -o START "$device")
       ;;
     *)
-      offset=0
-      ;;
+      _error "unknown OS" 
+      return 1
   esac
-  if [ -z $offset ]; then
-    _error "partition offset lookup failed" >&2
-    echo 0
+  if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
+    _error "offset lookup failed" 
     return 1
   fi
   echo $offset
+}
+
+get_device_size() {
+  local device="$1"
+
+  # Output in 512 byte blocks
+
+  local size
+  case $(get_OS) in
+    macOS)
+      size="$( diskutil info "$device" | \
+               grep -F "Disk Size:" | \
+               sed -E 's/^[^\(]+\(([0-9]+) Bytes\).+$/\1/' )"
+      ;;
+    Linux)
+      # Offset is returned in device blocks
+      size=$(lsblk -b -n -d -o SIZE "$device")
+      ;;
+    *)
+      _error "unknown OS" 
+      return 1
+  esac
+  
+  if ! [[ "$size" =~ ^[0-9]+$ ]]; then
+    _error "size lookup failed" 
+    return 1
+  fi
+  echo $(( $size / 512 ))
 }
 
 device_is_boot_drive() {
@@ -1611,22 +1714,25 @@ device_is_boot_drive() {
       [ "$(strip_partition_id "$device")" == "$boot_drive" ]
       ;;
     *)
-      return 0
-      ;;
+      _error "unknown OS" 
+      return 1
   esac
 }
 
 strip_partition_id() {
+  local device="$1"
+  
   # From device
   case $(get_OS) in
     macOS)
-      echo "$1" | sed 's/s[0-9][0-9]*$//'
+      echo "$device" | sed 's/s[0-9][0-9]*$//'
       ;;
     Linux)
-      echo "$1" | sed 's/[0-9][0-9]*$//'
+      echo "$device" | sed 's/[0-9][0-9]*$//'
       ;;
     *)
-      echo "strip_partition_id unknown OS"
+      _error "unknown OS" 
+      return 1
       ;;
   esac
 
@@ -1702,7 +1808,7 @@ list_partitions() {
 
       else
 
-        _DEBUG "$device device is a partition ($(get_fs_type $device))"
+        _DEBUG "$device device is a partition ($(get_device_format $device))"
         # Get the one conmtainer, if any
         p=( $(diskutil info "$device" | \
           grep "APFS Container:" | \
@@ -1754,7 +1860,7 @@ list_partitions() {
 
       # The device is either a drive or a specific partition
       if [ "$device" != "$(strip_partition_id "$device")" ]; then
-        _DEBUG "$device device is a partition ($(get_fs_type $device))"
+        _DEBUG "$device device is a partition ($(get_device_format $device))"
         echo "${device#/dev/}"
         return
       else
@@ -1782,8 +1888,8 @@ list_partitions() {
       fi
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1816,8 +1922,8 @@ os_mount() {
       return 0
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1834,8 +1940,8 @@ os_unmount() {
       sudo umount "$device"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1888,8 +1994,8 @@ EOF
       return
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1927,8 +2033,8 @@ EOF
       return
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -1960,7 +2066,7 @@ unmount_device() {
     _DEBUG "unmount_device: $volume_uuid"
 
     volume_name="$(get_volume_name $part)"
-    fs_type=$(get_fs_type "$part")
+    fs_type=$(get_device_format "$part")
     add_to_fstab "$volume_uuid" "$fs_type" "$volume_name" "$part"
 
     # Ubuntu & Mint will mount and unmount devices automatically
@@ -2050,7 +2156,7 @@ fsck_device() {
       local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
-        fs_type=$(get_fs_type "$part")
+        fs_type=$(get_device_format "$part")
         _DEBUG "$part" "$fs_type"
         case $fs_type in
           hfs)
@@ -2096,7 +2202,7 @@ fsck_device() {
         if ! $find_files; then
           flush_device "$part"
         fi
-        fs_type=$(get_fs_type "$part")
+        fs_type=$(get_device_format "$part")
         _DEBUG "$part" "$fs_type"
         case $fs_type in
           hfsplus)
@@ -2112,7 +2218,7 @@ fsck_device() {
             let result+=$?
             let nr_checked+=1
             ;;
-          vfat)
+          msdos)
             if ! which fsck.fat; then
               _error "Missing fsck for FAT (dosfstools), skipping $part"
               continue
@@ -2210,8 +2316,8 @@ fsck_device() {
       ;;
 
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -2227,8 +2333,8 @@ check_mount() {
       findmnt --target "$path" | grep -F "$device"
       ;;
     *)
+      _error "unknown OS" 
       return 1
-      ;;
   esac
 }
 
@@ -2630,7 +2736,7 @@ if $Do_Copy; then
   fi
 
   if $Resuming; then
-    echo "RESUMING COPY"
+    _info echo "RESUMING COPY"
   elif is_device "$Copy_Dest" false || \
        [[ ! "$Copy_Dest" =~ ^/dev/null$ && -s "$Copy_Dest" ]]; then
     echo 'copy: *** WARNING DESTRUCTIVE'
@@ -2639,6 +2745,12 @@ if $Do_Copy; then
        _info echo "copy: ...STOPPED."
        exit 1
     fi
+  fi
+
+  if ! $Opt_4K; then
+    _info echo "BLOCK SIZE: 512"
+  else
+    _info echo "BLOCK SIZE: 4096"
   fi
 
   if is_device "$Copy_Source" && ! unmount_device "$Copy_Source"; then
@@ -2658,7 +2770,8 @@ if $Do_Copy; then
          "$Event_Log" \
          "$Rate_Log" \
          "$Opt_Trim" \
-         "$Opt_Scrape"; then
+         "$Opt_Scrape" \
+         "$Opt_4K"; then
     _error "copy: ddrescue returned error exit status ($?) or was interruped"
     exit 1
   fi
@@ -2719,7 +2832,8 @@ if \
     exit 1
   fi
 
-  if ! is_device "$Device" && ! [ -f "$Device" ]; then
+  if ! $Preview_Zap_Regions && \
+     ! is_device "$Device" && ! [ -f "$Device" ]; then
     _error "report/zap: No such device or file ($Device)"
     exit 1
   fi
@@ -2784,7 +2898,7 @@ if \
     if [ "$Device" != "$(get_device_from_ddrescue_map "$Map_File")" ]; then
       # Correspondence to the map was checked coming in,
       # so assume the map is for a whole drive, compute offset.
-      Partition_Offset=$(get_partition_offset "$Device")
+      Partition_Offset=$(get_device_offset "$Device")
       if [ -z $Partition_Offset ] || [ $Partition_Offset -eq 0 ]; then
         _info echo "report: partition offset fail"
         return 1
@@ -2795,7 +2909,7 @@ if \
     if ! is_hfsplus "$Device" && \
        ! is_ext "$Device" && \
        ! is_ntfs "$Device"; then
-      _error "report: Usupported volume type ($(get_fs_type "$Device")) req. HFS+, NTFS, ext2, ext3, ext4"
+      _error "report: Usupported volume type ($(get_device_format "$Device")) req. HFS+, NTFS, ext2, ext3, ext4"
       exit 1
     fi
 
