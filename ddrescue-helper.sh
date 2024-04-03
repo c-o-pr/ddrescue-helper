@@ -239,26 +239,21 @@ usage_packages() {
 #######################################
 
 cleanup() {
-# XXX Moved into the shim which is already escalated
-#  if [ -d "$Map_Path" ]; then
-#    _info "Resetting ownership of $Map_Path"
-#    sudo chown $USER "$Map_Path" "$Map_Path"/*
-#  fi
-#  if [ -f "$Copy_Dest" ]; then
-#    _info "Resetting ownership of $Copy_Dest"
-#    sudo chown $USER "$Copy_Dest"
-#  fi
   echo > /dev/null
 }
 _abort() {
-  echo; echo '*** Aborted.'; echo
-  # Print mapfile for completeion status
-#  if $Copying && [ -s "$Map_File" ]; then cat "$Map_File"; fi
-#  echo;
+  local zap_in_progress="$1"
+  local device="$2"
+
+  echo; echo '*** Aborted'
+  if [ "$zap_in_progress" == "true" ]; then
+    flush_io "$device"
+  fi
   cleanup
+  echo
   exit 1
 }
-trap _abort SIGINT SIGTERM
+trap "_abort false" SIGINT SIGTERM
 
 #_suspend() {
 #  trap _abort SIGINT SIGTERM
@@ -436,16 +431,36 @@ read_block() {
   local direct_option="${3:-true}"
   local K4="${4:-false}"
 
-  local option="iflag=sync"
-  if $direct_option; then option+=",direct"; fi
+#  echo; echo $direct_option $K4 >&2
+
+  local option=""
+  if [ "$(get_OS)" == "Linux" ]; then
+    option="iflag=sync"
+  fi
+  if $direct_option; then
+    if ! [ -z "$option" ]; then
+      option+=",direct"
+    fi
+  else
+    option="iflag=direct"
+  fi
 
   local blocksize=512
   if $K4; then blocksize=4096; fi
 
   # Don't quote $option as empty arg confuses dd.
+  cat /dev/null >| ./TMP
+  sudo dd status=none bs=$blocksize count=1 iseek="$block" \
+    if="$target" $option > /dev/null 2> ./TMP
+  result=$?
+  if [ -s ./TMP ] && ! grep -F -q -i "input/output error" ./TMP; then
+    echo; cat ./TMP
+  fi
 #  cat >&2 <<EOF
-  sudo dd status=none bs=$blocksize count=1 if="$target" iseek="$block" $option
 #EOF
+  # For unknown reasons, a write seek after a read failure may fail,
+  # but waiting a bit before the next I/O helps
+  return $result
 }
 
 #  echo sudo hdparm --yes-i-know-what-i-am-doing --write-sector "block" "target"
@@ -456,16 +471,29 @@ write_block() {
   local direct_option="${3:-true}"
   local K4="${4:-false}"
 
+#  echo; echo $direct_option $K4 >&2
+
   local option="oflag=sync"
-  if $direct_option; then option+=",direct"; fi
+  if $direct_option; then
+    option+=",direct"
+  fi
 
   local blocksize=512
   if $K4; then blocksize=4096; fi
 
-#cat >&2 <<EOF
-  sudo dd status=none bs=$blocksize count=1 conv=notrunc oseek="$block" \
-    if=/dev/zero of="$target" $option
+  cat /dev/null >| ./TMP
+  sudo dd status=none bs=$blocksize count=1 oseek="$block" \
+    conv=notrunc if=/dev/random of="$target" $option 2> ./TMP
+  result=$?
+  
+  # If output is I/O error then squelch. Print other errors.
+  if [ -s ./TMP ] && ! grep -F -q -i "input/output error" ./TMP; then
+    echo; cat ./TMP
+    result=128
+  fi
+#  cat >&2 <<EOF
 #EOF
+  return $result
 }
 
 zap_sequence() {
@@ -475,32 +503,42 @@ zap_sequence() {
   local K4="${4:-false}"
 
   local result t
-  local max=3
-  local c=1
-  local direct_option=false
+  local direct_option="$(dd_supports_direct_io "$target")"
 
-  _info printf "zap_sequence: Processing $target %d (0x%X) %d:\n" "$block" "$block" "$count"
+  _info printf \
+    "zap_sequence: Processing $target %d (0x%X) %d:\n" \
+    "$block" "$block" "$count"
 
-  while [ "$c" -le "$count" ]; do
+  local slow_time=3 read_time
+  for ((c = 1; c <= count; c++)); do
     printf "  %d [0x%X] read" "$block" "$block"
-#    debug -n "$block read "
-#    let t=$(date +%s)+2
-    read_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1
+    # Time plus time for a slow read
+    let t="$(date +%s)"+$slow_time
+    read_block "$target" "$block" "$direct_option" "$K4"
     result=$?
-#    t2=$(date +%s)
-#    debug $t $t2
-#    if [ $result -ne 0 ] || [ $t -lt $t2 ]; then
-    if [ $result -ne 0 ]; then
-      echo -n " FAILED ($result), write"
-      write_block "$target" "$block" "$direct_option" "$K4" # > /dev/null 2>&1
-#      sleep 0.1
+    # Time after read
+    t2=$(date +%s)
+    let read_time=t2-$t-$slow_time
+#    echo $t $t2
+    # If failed or slow
+#    if [ $result -ne 0 ]; then
+    if [ "$read_time" -gt 0 ] || [ $result -ne 0 ]; then
+      if [ $result -ne 0 ]; then
+        echo -n " FAILED ($result, ${read_time}s), write"
+      else
+        echo -n " SLOW (${read_time}s), write"
+      fi
+#      sleep 1;
+      write_block "$target" "$block" "$direct_option" "$K4"
       result=$?
       if [ "$result" -ne 0 ] ; then
         echo -n " FAILED ($result)"
       else
         echo -n ", re-read"
-        read_block "$target" "$block" "$direct_option" "$K4" > /dev/null 2>&1;
-        if ! $?; then
+        read_block "$target" 100 "$direct_option" "$K4"
+        sleep 0.5
+        read_block "$target" "$block" "$direct_option" "$K4"
+        if ! [ $? ]; then
           echo -n " FAILED"
         else
           echo -n " OK"
@@ -510,7 +548,6 @@ zap_sequence() {
       echo -n " OK"
     fi
     let block+=1
-    let c+=1
     echo
   done
   _info echo "zap_sequence: done, $count blocks"
@@ -600,11 +637,21 @@ zap_from_mapfile() {
   }
   if [ $? -ne 0 ]; then return 1; fi
 
-  # Verify with user
-  local block count total_blocks=0
+  # Do zap
   if $preview; then
     _info echo "zap_from_mapfile: ZAP PREVIEW: $Device"
+    printf "%12s %4s %11s %5s\n" "Block" "Count" "(hex)"
+    cat "$zap_blocklist" | \
+    { \
+      while read block count; do
+        let total_blocks+=$count
+        printf "%12d %-4d %#12x %#5.3x\n" \
+          "$block" "$count" "$block" "$count"
+      done
+      _info echo "zap_from_mapfile: done, total $total_blocks blocks"
+    }
   else
+    ( printf "\n\n###\n"; date) >> "$zap_blocklist-LOG"
     _warn echo "Blocks are read tested and skipped if readable"
     _warn echo -n "CONTINUE? [y/N] "
     read -r response
@@ -612,40 +659,18 @@ zap_from_mapfile() {
        _info echo "zap_from_mapfile: ...STOPPED."
        exit 1
     fi
-  fi
-  # Do zap
-  if $preview; then
-    printf "%12s %4s %11s %5s\n" "Block" "Count" "(hex)"
-  else
-    escalate
-  fi
-  cat "$zap_blocklist" | \
-  { \
-    while read block count; do
-      let total_blocks+=$count
-      if $preview; then
-        #### For debugging 4K arithmetic
-#          local b local c
-#          if $K4; then
-#            let bs=block*8
-#            let be=(block+count)*8
-#          else
-#            let bs=block
-#            let be=(block+count)
-#          fi
-#          printf "%12d %-4d %#12x %#5.3x  [%d->%d  %#x->%#x]\n" \
-#            "$block" "$count" "$block" "$count" "$bs" "$be" "$bs" "$be"
-        ####
-         printf "%12d %-4d %#12x %#5.3x\n" \
-           "$block" "$count" "$block" "$count"
-      else
+    cat "$zap_blocklist" | \
+    { \
+      while read block count; do
+        let total_blocks+=$count
         zap_sequence "$device" "$block" "$count" "$K4"
-      fi
-    done
-    _info echo "zap_from_mapfile: done, total $total_blocks blocks"
-  }
-  # | tee >(grep -F FAIL > "$zap_blocklist-FAIL")
+      done
+      _info echo "zap_from_mapfile: done, total $total_blocks blocks"
+      flush_io "$device" false
+    } | tee -a "$zap_blocklist-LOG"
+# | tee >((grep "FAIL") >> "$zap_blocklist-LOG")
 
+  fi
   return 0
 }
 
@@ -1044,7 +1069,7 @@ _cleanup() {
   if [ ! -z "$user" ] && [ "$user" != root ]; then
     echo "$(basename "$0"): Metadata: setting ownership to $user"
     if [ -f "$map_file" ]; then
-      chown "$user" "$map_file"
+      chown "$user" "$map_file" "${map_file}.bak"
     fi
     if ls "${rate_log}-"* > /dev/null 2>&1; then
       chown "$user" "${rate_log}-"*
@@ -1052,7 +1077,6 @@ _cleanup() {
     if [ -f "$event_log" ]; then
       chown "$user" "$event_log"
     fi
-
     if [ -f "$dest" ]; then
       echo "$(basename "$0"): $dest: setting ownership to $user"
       chown "$user" "$dest"
@@ -1060,7 +1084,7 @@ _cleanup() {
   fi
 }
 _abort() {
-  echo "*** $(basename "$0"): abort..."
+  echo "*** $(basename "$0"): aborted"
   _cleanup
   exit 1
 }
@@ -1234,24 +1258,36 @@ resource_exists() {
   [ -f "$1" ] || [ -L "$1" ] || [ -b "$1" ] || [ -c "$1" ]
 }
 
-flush_device() {
-  local device="$1"
+flush_io() {
+  local device="$1" # Not used on macOS
+  local flush_all="${2:-true}"
 
   case $(get_OS) in
     macOS)
-      sudo purge
+      _info echo -n "flush_io: "
+      if $flush_all || [ -f "$device" ]; then
+        _info echo -n "purge, "
+        sudo purge
+      fi
+      _info echo -n "sync, "
+      sync
+      _info echo "done"
       ;;
     Linux)
-      _info echo -n "flush_device: $device: "
-      _info echo -n "sync"
+      _info echo -n "flush_io: $device: "
+      if $flush_all || [ -f "$device" ]; then
+        _info echo -n "drop caches, "
+        echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+      fi
+      _info echo -n "sync, "
       sync
-      _info echo -n ", drop caches"
-      echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-      _info echo -n ", flushbufs"
-      sudo blockdev --flushbufs $device
-      # Flush device onboard buffer, if supported by drive
-      _info echo -n ", flush drive, "
-      sudo hdparm -F $device
+      if ! [ -f "$device" ]; then
+        _info echo -n "flushbufs, "
+        sudo blockdev --flushbufs $device
+         # Flush device onboard buffer, if supported by drive
+        _info echo -n "flush drive, "
+        sudo hdparm -F $device
+      fi
       _info echo "done"
       ;;
     *)
@@ -2148,7 +2184,7 @@ fsck_device() {
   case $(get_OS) in
     macOS)
       # Black arts
-      flush_device "$part"
+      flush_io
       partitions=( $(list_partitions "$device" true) )
       _DEBUG "$device" "$(strip_partition_id "$device")"
       _DEBUG ${partitions[@]}
@@ -2159,7 +2195,7 @@ fsck_device() {
         fs_type=$(get_device_format "$part")
         _DEBUG "$part" "$fs_type"
         case $fs_type in
-          hfs)
+          hfsplus)
             if ! $find_files; then
               sudo fsck_hfs -f -y "$part"
             else
@@ -2200,7 +2236,7 @@ fsck_device() {
       for (( p=0; p<${#partitions[@]}; p++ )); do
         local part=/dev/"${partitions[$p]}"
         if ! $find_files; then
-          flush_device "$part"
+          flush_io "$part"
         fi
         fs_type=$(get_device_format "$part")
         _DEBUG "$part" "$fs_type"
@@ -2360,8 +2396,11 @@ Preview_Zap_Regions=true
 Opt_Trim=true
 Opt_Scrape=false
 Opt_4K=false
+Opt_Zap_Slow=false
+#
+Zap_In_Progress=false
 
-while getopts ":cfhmpqsuzKXZ" Opt; do
+while getopts ":cfhmpqsuzKTXZ" Opt; do
   case ${Opt} in
     c) Do_Copy=true ;;
     f) Do_Fsck=true ;;
@@ -2378,6 +2417,7 @@ while getopts ":cfhmpqsuzKXZ" Opt; do
       Preview_Zap_Regions=true
       ;;
     K) Opt_4K=true ;;
+    T) Opt_Zap_Slow=true ;;
     Z)
       # Overwite blocks in the device one at a time using an existing map
       Do_Zap_Blocks=true
@@ -2949,13 +2989,18 @@ if \
     # dependency on a partition-relative utility list fsck.
     # The user specifies the device that was used to make the map.
 
-    if ! $Preview_Zap_Regions && is_device "$Device"; then
-      _info echo "zap: Umount and prevent automount..."
-      if ! unmount_device "$Device"; then
-        _error "zap: Unmount failed"
-        exit 1
+    if ! $Preview_Zap_Regions; then
+      if is_device "$Device"; then
+        _info echo "zap: Umount and prevent automount..."
+        if ! unmount_device "$Device"; then
+          _error "zap: Unmount failed"
+          exit 1
+        fi
       fi
+      # XXX This must be outside of any function
+      trap "_abort true $Device" SIGINT SIGTERM
     fi
+
     zap_from_mapfile "$Device" \
                      "$Map_File" \
                      "$Zap_Block_List" \

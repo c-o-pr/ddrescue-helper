@@ -311,30 +311,18 @@ A growing list of fixes and improvements are under consideration.
 
 **General**
 
-- [ ] ADD Option to zap within the GPT, then copy the redundant GPT over the primary.
-- [ ] ADD Other file system types alternate format recovery options
-- [ ] ADD 4K block size option to ddrescue for 4K Advanced Format Drives
 - [ ] ADD Mount device to chosen dir
-- [ ] XXX Ensure no volume metadata dependencies for pathological case.
-- [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive
 - [ ] ADD auto-detection and installation of supporting tools on Linux.
-- [ ] XXX Test zap of a file
-- [ ] ADD Linux UUID reset (macOS tools are unreliable)
-- [ ] ADD Consistency checks for volume names matching map metadata
 - [ ] ADD selectable rate limit for -P
-- [ ] XXX For partitions, check that device partition label matches the map.
-- [ ] XXX Devices must be "/dev/" specced although this could be inferred--normalize
-- [ ] XXX Verify LABEL tolerates whitespace or disallow.
 - [ ] ADD Output a uniquely-named summary of unreadable blocks in output of -Z, inc failed retry
 - [ ] ADD Save the ddrescue work summaries for each run so that progress can be examined.
 - [ ] ADD Input a list of files to copy (source) and a tree of metadata.
 - [ ] ADD pass additional options to ddrescue
-- [ ] ADD /dev/ specific fstab entries to prevent auto-mount; including adding and removal without a corresponding drive present.
-- [ ] XXX Reports inconsistent about inclusion of all blocks vs. summary between macOS and Linux.
-- [ ] ADD Detection of Linux systemd support for auto-unmounting
-- [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
 - [ ] ADD Option to ZAP even if READ test succeeds
+- [x] XXX Test zap of a file (Can work)
+- [x] ADD 4K block size option to ddrescue for 4K Advanced Format Drives
 - [x] ADD System detection of ddrescue version or options: ADDED check for direct I/O capability but not a comprehensive version review
+- [x] ADD ZAP slow reads
 - [x] XXX Normalize get_fs_tyoe
 - [x] XXX The warning for ZAP overlapping format datastructures needs to be device format aware-- drive versus volume
 - [x] ADD Improve situational awareness of the EFI service partition re MBR
@@ -413,15 +401,30 @@ interactions with systemd, etc.
 
 ## TODOS ROBUSTNESS
 
+- [ ] ADD A set of pre-defined block contents to be used with ZAP instead 
+of /dev/zero
+- [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive
+- [ ] ADD Other file system types alternate format recovery options
+- [ ] ADD Linux UUID reset (macOS tools are unreliable)
+- [ ] ADD Consistency checks for volume names matching map metadata
+- [ ] XXX For partitions, check that device partition label matches the map.
+- [ ] XXX Devices must be "/dev/" specced although this could be inferred--normalize
+- [ ] XXX Verify LABEL tolerates whitespace or disallow.
+- [ ] XXX Ensure no volume metadata dependencies for pathological case.
+- [ ] ADD /dev/ specific fstab entries to prevent auto-mount; including adding and removal without a corresponding drive present.
+- [ ] ADD Detection of Linux systemd support for auto-unmounting
+- [ ] XXX Reports inconsistent about inclusion of all blocks vs. summary between macOS and Linux.
+- [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
+- [ ] ADD comparison of data between ZAP write and re-read
 - [ ] XXX Option handling is bone-headed, refactor
 - [ ] XXX is_device() (actual) needs to be distinguished from is /dev
-- [ ] XXX CHECK FOR EXISTING MATCHING MAP CAN'T DETECT source v. destination reversal or ambiguity.
+- [ ] XXX CHECK FOR EXISTING MATCHING MAP -- CAN'T DETECT source v. destination reversal or ambiguity.
 - [ ] XXX The -Z zap read test relies on dd exit status. Better to inspect the block read for contents?
 - [ ] ADD Regression test suite
 - [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the map file due to ambiguous whitespace
 - [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+ (Linux?). CCC used to offer a helper; now it's a UI option.
-- [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a baad volume worse before copying.
-- [ ] ADD zap blocklist sanity check for drive/part metadata regions
+- [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a bad volume worse before copying.
+- [ ] ADD zap blocklist sanity check for drive/part metadata regions, per device format.
 - [ ] XXX For -p -s Figure out a way to look up src/dst devices from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
 - [x] XXX Fix volume -u -m UUID edge case handling to Linux only.
 - [x] XXX Use stat(1) to check for src/dst hard links
