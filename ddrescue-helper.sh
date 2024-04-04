@@ -14,10 +14,11 @@ usage() {
   -u | -m | -f <device>
      :: UNMOUNT / MOUNT / FSCK
 
-  -c [ -X ] <label> <source> <destination>
+  -c [ -X ] [ -M ] <label> <source> <destination>
      :: COPY with ddrescue creating bad-block and slow read maps.
      :: Use /dev/null for <destination> to SCAN <source>.
      :: -X to scrape during SCAN
+     :: -M passed to ddrescue to retrim
 
   -p | -s | -q | -z | -Z [ -K ] <label> <device>
      :: REPORT / ZAP
@@ -123,6 +124,9 @@ DESCRIPTION
   (-p) to list files as being affected by errors for blocks that are readble.
   For a drive that stores large media files (MB+) unscraped areas are unlikely
   to be part of multiple files. Scrape is enabled by default for COPY.
+
+  `-M`: is passed to ddrescue as the retrim option, which marks all failed 
+  blocks as untrimmed, causing them to be retried.
 
   It's common for a failing drive to disconnectr during a COPY "scape" pass.
   Run ddrescue-helper again with the parameters to resume.
@@ -397,7 +401,7 @@ is_uuid() {
       return 1
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 
@@ -413,7 +417,7 @@ dd_supports_direct_io() {
       dd --help | grep -F "direct I/O" > /dev/null 2>&1
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -473,6 +477,12 @@ write_block() {
 
 #  echo; echo $direct_option $K4 >&2
 
+  # On macOS sync and direct produce different
+  # write failure responses:
+  # sync,direct -> bad file descriptor
+  # direct -> bad file descriptor
+  # sync -> resource busy
+
   local option="oflag=sync"
   if $direct_option; then
     option+=",direct"
@@ -485,7 +495,7 @@ write_block() {
   sudo dd status=none bs=$blocksize count=1 oseek="$block" \
     conv=notrunc if=/dev/random of="$target" $option 2> ./TMP
   result=$?
-  
+
   # If output is I/O error then squelch. Print other errors.
   if [ -s ./TMP ] && ! grep -F -q -i "input/output error" ./TMP; then
     echo; cat ./TMP
@@ -509,48 +519,90 @@ zap_sequence() {
     "zap_sequence: Processing $target %d (0x%X) %d:\n" \
     "$block" "$block" "$count"
 
-  local slow_time=3 read_time
-  for ((c = 1; c <= count; c++)); do
-    printf "  %d [0x%X] read" "$block" "$block"
-    # Time plus time for a slow read
-    let t="$(date +%s)"+$slow_time
-    read_block "$target" "$block" "$direct_option" "$K4"
-    result=$?
-    # Time after read
-    t2=$(date +%s)
-    let read_time=t2-$t-$slow_time
-#    echo $t $t2
-    # If failed or slow
-#    if [ $result -ne 0 ]; then
-    if [ "$read_time" -gt 0 ] || [ $result -ne 0 ]; then
-      if [ $result -ne 0 ]; then
-        echo -n " FAILED ($result, ${read_time}s), write"
+  local slow_time=3
+  local max_extend=2
+  local range=$count
+  local read_time
+  local this_io_failed
+  local last_io_failed=false
+  #
+  # If a read or write fails just try to write the next block without
+  # reading because write failure is more indicative of bad drive health
+  # than read failure. If write doesn't succeed there's no hope for ZAP.
+  #
+  # reading because it's likely to be 
+  # If the last block in the extent either fails or is slow,
+  # extend the range of ZAP up to max_extend blocks.
+  #
+  for ((c = 1; c <= range; c++)); do
+  
+    this_io_failed=false
+    
+    if ! $last_io_failed; then
+      printf "  %d [0x%X] read" "$block" "$block"
+      # Time plus time for a slow read
+      let t="$(date +%s)"+slow_time
+      read_block "$target" "$block" "$direct_option" "$K4"
+      result=$?
+      # Time after read
+      t2=$(date +%s)
+      # read_time calculation inc -1 works around imprecision of date on macOS
+      # which is limited to whole seconds
+      read_time=$((t2 - (t - slow_time) - 1))
+#      echo -n " $t $t2 $read_time"
+
+      # If failed or slow
+      if [ "$read_time" -gt 0 ] || [ $result -ne 0 ]; then
+        if [ $result -ne 0 ]; then
+          echo -n " FAILED ($result, ${read_time}s), write"
+        else
+          echo -n " SLOW (${read_time}s), write"
+        fi
+        this_io_failed=true
       else
-        echo -n " SLOW (${read_time}s), write"
+        echo " OK"
       fi
-#      sleep 1;
+    else
+      printf "  %d [0x%X] write" "$block" "$block"
+    fi
+
+    if $this_io_failed || $last_io_failed; then
       write_block "$target" "$block" "$direct_option" "$K4"
       result=$?
       if [ "$result" -ne 0 ] ; then
-        echo -n " FAILED ($result)"
+        echo " FAILED ($result)"
+        this_io_failed=true
       else
-        echo -n ", re-read"
-        read_block "$target" 100 "$direct_option" "$K4"
-        sleep 0.5
+        echo -n " OK, read"
         read_block "$target" "$block" "$direct_option" "$K4"
         if ! [ $? ]; then
-          echo -n " FAILED"
+          echo " FAILED"
+          this_io_failed=true
         else
-          echo -n " OK"
+          echo " OK"
+          this_io_failed=false
         fi
       fi
-    else
-      echo -n " OK"
     fi
+
+    # Read issue on last block so extend
+    if $this_io_failed; then
+      last_io_failed=true
+      if (( c == range && c < (count + max_extend) )); then
+        _advise echo "zap_sequence: extending 1 block, max $max_extend"
+        let range+=1
+      fi
+    else
+      last_io_failed=false
+    fi
+
     let block+=1
-    echo
+    sleep 0.1
   done
-  _info echo "zap_sequence: done, $count blocks"
+
+  _info echo "zap_sequence: done, $range blocks"
+  # Side effect, return actual number of blocks processed
+  return $range
 }
 
 zap_from_mapfile() {
@@ -602,7 +654,7 @@ zap_from_mapfile() {
     {
     local _max_blocks=2000
     local _max_extent=500
-    local total_count=0
+    local total_blocks=0
     local address_error=false
     local format_error=false
     while read block count; do
@@ -622,13 +674,13 @@ zap_from_mapfile() {
       if [ $count -gt "$_max_extent" ]; then
         _warn echo "*** zap_from_mapfile: Extent > $_max_extent blocks"
       fi
-      let total_count+=$count
+      let total_blocks+=$count
     done
     if $format_error; then
       return 1
     fi
-    if [ "$total_count" -gt "$_max_blocks" ]; then
-      _error "Total blocks $total_count > max allowed $_max_blocks"
+    if [ "$total_blocks" -gt "$_max_blocks" ]; then
+      _error "Total blocks $total_blocks > max allowed ($_max_blocks)"
       return 1
     fi
     if $address_error; then
@@ -643,10 +695,11 @@ zap_from_mapfile() {
     printf "%12s %4s %11s %5s\n" "Block" "Count" "(hex)"
     cat "$zap_blocklist" | \
     { \
+      total_blocks=0
       while read block count; do
-        let total_blocks+=$count
         printf "%12d %-4d %#12x %#5.3x\n" \
           "$block" "$count" "$block" "$count"
+        let total_blocks+=$count
       done
       _info echo "zap_from_mapfile: done, total $total_blocks blocks"
     }
@@ -657,13 +710,14 @@ zap_from_mapfile() {
     read -r response
     if [[ ! $response =~ ^[Yy]$ ]]; then
        _info echo "zap_from_mapfile: ...STOPPED."
-       exit 1
+       return 1
     fi
     cat "$zap_blocklist" | \
     { \
+      total_blocks=0
       while read block count; do
-        let total_blocks+=$count
         zap_sequence "$device" "$block" "$count" "$K4"
+        let total_blocks+=$?
       done
       _info echo "zap_from_mapfile: done, total $total_blocks blocks"
       flush_io "$device" false
@@ -770,7 +824,7 @@ sanity_check_block_range() {
         if (( block <= 40 / 8)) || \
            (( block >= (device_size / 8) - (41 / 8) )); then
           return 1
-        fi      
+        fi
       fi
       return 0
       ;;
@@ -1098,7 +1152,8 @@ rate_log="$5"
 trim="${6:-true}"
 scrape="${7:-false}"
 K4="${8:-false}"
-user="${9:-$USER}"
+retrim="${9:-false}"
+user="${10:-$USER}"
 
 next_rate_log_name() {
   local rate_log="$1"
@@ -1137,7 +1192,8 @@ if $missing; then
   echo "$(basename "$0"): missing parameter(s)"
   echo "  source=\"$1\" dest=\"$2\" map_file=\"$3\""
   echo "  event_log=\"$4\" rate_log=\"$5\""
-  echo "  scrape_opt=\"$6\" trim_opt=\"$7\" K4=\"$8\" user=\"$9\""
+  echo "  scrape=\"$6\" trim=\"$7\" K4=\"$8\" retrim=\"$9\""
+  echo "  user=\"$10\""
   exit 1
 fi
 
@@ -1148,10 +1204,12 @@ fi
 # -T Xs Maximum time since last successful read allowed before giving up.
 # -r x read retries
 # -b sector size
+# -A try again
 opts="-f -T 10m -r0"
 if ! $trim; then opts+=" -N"; fi
 if ! $scrape; then opts+=" -n"; fi
 if $K4; then opts+=" -b 4096"; fi
+if $retrim; then opts+=" -M"; fi
 opts+=" --log-events=$event_log"
 
 tries=0
@@ -1192,6 +1250,7 @@ run_ddrescue() {
   local trim="${6:-true}"
   local scrape="${7:-false}"
   local K4="${8:-false}"
+  local retrim="${9:-false}"
 
   local result
   local shim_script="./ddrescue-shim.sh"
@@ -1199,7 +1258,7 @@ run_ddrescue() {
   _DEBUG "$(pwd)"
   sudo "$shim_script" "$copy_source" "$copy_dest" "$map_file" \
        "$event_log" "$rate_log" \
-       "$trim" "$scrape" "$K4" "$USER"
+       "$trim" "$scrape" "$K4" "$retrim" "$USER"
   result=$?
   return $result
 }
@@ -1244,7 +1303,7 @@ get_device_from_ddrescue_map() {
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
   if [ -z $x ]; then
-    _error "map device = \"\"" 
+    _error "map device = \"\""
     exit 1
   fi
   echo "$x"
@@ -1291,7 +1350,7 @@ flush_io() {
       _info echo "done"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1308,7 +1367,7 @@ get_inode() {
       stat --printf %i "$path"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1326,7 +1385,7 @@ get_symlink_target() {
       return 1
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1356,7 +1415,7 @@ get_alias_target() {
       return 1
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1374,7 +1433,7 @@ get_partition_table_type() {
       lsblk --raw -n -d -o PTTYPE "$device"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1394,7 +1453,7 @@ get_partition_uuid() {
       return 1
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1423,7 +1482,7 @@ get_volume_uuid() {
       fi
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1441,7 +1500,7 @@ get_volume_name() {
       lsblk -n -d -o LABEL "$device"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1488,16 +1547,16 @@ get_device_format() {
       fi
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 
   if [ -z "$format" ]; then
-    _error "unknown format $device" 
+    _error "unknown format $device"
     return 1
   fi
   echo "$format"
-  
+
 }
 
 get_device_blocksize() {
@@ -1514,7 +1573,7 @@ get_device_blocksize() {
       lsblk --raw -n -d -o PHY-SEC "$device" # --raw no whitespace
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1539,7 +1598,7 @@ get_fs_blocksize_for_file_lookup() {
       fi
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1566,7 +1625,7 @@ is_mounted() {
       return
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1582,7 +1641,7 @@ is_hfsplus() {
       [ "$(get_device_format "$device")" == "hfsplus" ]
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1598,7 +1657,7 @@ is_ntfs() {
       [ "$(get_device_format "$device")" == "ntfs" ]
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1614,7 +1673,7 @@ is_ext() {
       [[ "$(get_device_format "$device")" =~ ^ext[234]$ ]]
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1650,7 +1709,7 @@ is_device() {
       fi
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1672,11 +1731,11 @@ get_device_offset() {
       offset=$(lsblk -n -d -o START "$device")
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
   if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
-    _error "offset lookup failed" 
+    _error "offset lookup failed"
     return 1
   fi
   echo $offset
@@ -1699,12 +1758,12 @@ get_device_size() {
       size=$(lsblk -b -n -d -o SIZE "$device")
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
-  
+
   if ! [[ "$size" =~ ^[0-9]+$ ]]; then
-    _error "size lookup failed" 
+    _error "size lookup failed"
     return 1
   fi
   echo $(( $size / 512 ))
@@ -1750,14 +1809,14 @@ device_is_boot_drive() {
       [ "$(strip_partition_id "$device")" == "$boot_drive" ]
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
 
 strip_partition_id() {
   local device="$1"
-  
+
   # From device
   case $(get_OS) in
     macOS)
@@ -1767,7 +1826,7 @@ strip_partition_id() {
       echo "$device" | sed 's/[0-9][0-9]*$//'
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
       ;;
   esac
@@ -1924,7 +1983,7 @@ list_partitions() {
       fi
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1958,7 +2017,7 @@ os_mount() {
       return 0
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -1976,7 +2035,7 @@ os_unmount() {
       sudo umount "$device"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -2030,7 +2089,7 @@ EOF
       return
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -2069,7 +2128,7 @@ EOF
       return
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -2352,7 +2411,7 @@ fsck_device() {
       ;;
 
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -2361,15 +2420,17 @@ check_mount() {
   local path="$1"
   local device="$2"
 
-  # Returns true if path is on device
   case $(get_OS) in
     macOS)
+      d="$(df | grep disk23 | sed 's/  */ /g' | cut -d ' ' -f 9)"
+      echo "/Volumes/V0-/_XXX/" | grep -F -q "^$d"
       ;;
     Linux)
+      # Returns true if path is on device
       findmnt --target "$path" | grep -F "$device"
       ;;
     *)
-      _error "unknown OS" 
+      _error "unknown OS"
       return 1
   esac
 }
@@ -2397,16 +2458,18 @@ Opt_Trim=true
 Opt_Scrape=false
 Opt_4K=false
 Opt_Zap_Slow=false
+# ddrescue option -A --try-again
+Opt_Retrim=false
 #
 Zap_In_Progress=false
+#Zap_Extend_Extent=false
 
-while getopts ":cfhmpqsuzKTXZ" Opt; do
+while getopts ":cfhmpqsuzKMXZ" Opt; do
   case ${Opt} in
     c) Do_Copy=true ;;
     f) Do_Fsck=true ;;
     h) help | more; exit 0 ;;
     m) Do_Mount=true ;;
-    X) Opt_Scrape=true ;;
     p) Do_Error_Files_Report=true ;;
     q) Do_Rate_Plot=true ;;
     s) Do_Slow_Files_Report=true ;;
@@ -2416,8 +2479,9 @@ while getopts ":cfhmpqsuzKTXZ" Opt; do
       Do_Zap_Blocks=true
       Preview_Zap_Regions=true
       ;;
+    M) Opt_Retrim=true ;;
     K) Opt_4K=true ;;
-    T) Opt_Zap_Slow=true ;;
+    X) Opt_Scrape=true ;;
     Z)
       # Overwite blocks in the device one at a time using an existing map
       Do_Zap_Blocks=true
@@ -2647,8 +2711,8 @@ if $Do_Copy; then
   fi
 
   # Ensure the path for the metadata isn't on a mountpoint for either device.
-  if check_mount "$(dirname $Metadata_Path)" "$Copy_Source" || \
-     check_mount "$(dirname $Metadata_Path" "$Copy_Dest)"; then
+  if check_mount "$(dirname "$Metadata_Path")" "$Copy_Source" || \
+     check_mount "$(dirname "$Metadata_Path")" "$Copy_Dest"; then
     _error "copy: Metadata may not saved on source or destination"
     exit 1
   fi
@@ -2811,7 +2875,8 @@ if $Do_Copy; then
          "$Rate_Log" \
          "$Opt_Trim" \
          "$Opt_Scrape" \
-         "$Opt_4K"; then
+         "$Opt_4K" \
+         "$Opt_Retrim"; then
     _error "copy: ddrescue returned error exit status ($?) or was interruped"
     exit 1
   fi

@@ -218,15 +218,15 @@ Runs `ddrescue` to scan a device or recover data, generating a MAP of read error
 
 - SCAN a drive or partition to create error MAP and rate log.
 
-`ddrescue_helper.sh -c <label> <deivce> <device>`
+`ddrescue_helper.sh -c [-M] <label> <deivce> <device>`
 
 - COPY a drive or partition to another device.
 
-`ddrescue_helper.sh -c <label> <deivce> <file>`
+`ddrescue_helper.sh -c [-M]  <label> <deivce> <file>`
 
 - COPY drive or partition to a file (image).
 
-`ddrescue_helper.sh -c <label> <file> <file>`
+`ddrescue_helper.sh -c [-M] <label> <file> <file>`
 
 - COPY a file to another file.
 
@@ -234,9 +234,9 @@ SCAN reads `<source>` to build the bad block MAP and rate log without saving dev
 
 COPY saves the data on `<source>` at `<destination>`. COPY is destructive to data on `<destination>`. Basic consistency checks are performed by the helper to avoid some basic hazards.
 
-`-X`: During SCAN, `ddrescue` scraping is disabled by default to save some time getting block list for use with REPORTS `-p` and `-s`.
-
-For COPY `-X` (scraping) is implied to recover as much data as possible.
+`-M`: is passed to ddrescue as the retrim option, which marks all failed blocks as untrimmed, causing them to be retried.
+  
+`-X`: During SCAN, `ddrescue` scraping is disabled by default to save some time getting block list for use with REPORTS `-p` and `-s`. For COPY scraping is implied to recover as much data as possible.
 
 Scraping explanation: By default. `ddrescue` uses large reads to speed copy progress. When it gets a read error it marks the large area as an error and continues to obtain as much as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the bad blocks. In a third pass, it "scrapes" each block in the trimmed area to collect as much data as possible leaving a preview MAP of bad blocks. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and not worth the effort because files can be large relative to the bad region, and ZAP will test each block. `-X` enables `ddrescue` scraping for SCAN, to try to refine the resolution of small files affected by blocks.
 See the GNU ddrescue manual.
@@ -311,6 +311,7 @@ A growing list of fixes and improvements are under consideration.
 
 **General**
 
+- [ ] ADD report of irrelevant commandline options
 - [ ] ADD Mount device to chosen dir
 - [ ] ADD auto-detection and installation of supporting tools on Linux.
 - [ ] ADD selectable rate limit for -P
@@ -382,6 +383,9 @@ No "/dev", -s to set new random UUID
 
 ## TODOS DOCUMENTATION
 
+- [ ] ADD Explain Linux vs macOS differences in ZAP, and implications of 
+read vs write failure. macOS appears to read / write some other area of the drive besides the requested blocks. Linux seems to work as expected. 
+- [ ] ADD Explain about ZAP extend and macOS likely requesting greater than 1 block for dd single block input.
 - [ ] ADD Explanations about how to read the map, the support metadata, and the thinking about blocklists, extents, and blocksize considerations.
 - [ ] ADD Explanations about modern vs older versions of Linux.
 - [ ] ADD Explanation about APFS and bootdrive exclusions
@@ -401,6 +405,7 @@ interactions with systemd, etc.
 
 ## TODOS ROBUSTNESS
 
+- [ ] XXX Double check alignment of extents in ZAP
 - [ ] ADD A set of pre-defined block contents to be used with ZAP instead 
 of /dev/zero
 - [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive
