@@ -9,18 +9,18 @@ TRACE=false
 
 usage() {
   cat << EOF
-*** $(basename "$0"): Usage
+$(basename "$0"): Usage:
 
   -u | -m | -f <device>
      :: UNMOUNT / MOUNT / FSCK
 
-  -c [ -X ] [ -M ] <label> <source> <destination>
+  -c [-X |-M] <label> <source> <destination>
      :: COPY with ddrescue creating bad-block and slow read maps.
      :: Use /dev/null for <destination> to SCAN <source>.
-     :: -X to scrape during SCAN
-     :: -M passed to ddrescue to retrim
+     :: -X passed to GNU ddrescue scrape during SCAN
+     :: -M passed to GNU ddrescue to retrim
 
-  -p | -s | -q | -z | -Z [ -K ] <label> <device>
+  -p | -s | -q | -z | -Z [-K] <label> <device>
      :: REPORT / ZAP
      -p | -s
         REPORT files affected by read errors | slow reads.
@@ -32,6 +32,7 @@ usage() {
         <device> to re-allocate underlying sectors. The block is read tested and
         only written if the read fails.
      -K ZAP 4096 byte blocks instead of 512.
+
   <device> is a /dev entry for an block storage device. For MOUNT, UNMOUNT or
   FSCK, if <device> is a whole drive, all its partitions are affected. MOUNT and
   UNMOUNT ignore the EFI Service Parition (first partition of GPT dformat rive).
@@ -40,27 +41,22 @@ usage() {
 
   <label> is a name for a directory created by COPY to contain ddrescue map and
   rate-log data. Temporary files and reports are also saved there.
+
 EOF
 }
 
 help() {
   usage
-  cat << EOF
+  cat << "EOF"
+DESCRIPTION
 
-  FSCK (-f) works with the following volume types:
-    macOS: FAT, ExFAT, HFS+, APFS
-    Limux: ext2/3/4, FAT, ExFAT, NTFS, HFS+
-
-  With MOUNT (-m), <device> can be a UUID to be removed from /etc/fstab. In
-  certain use cases, an /etc/fstab entry for a volume UUID can end up orphaned.
-
-  With COPY (-c) <destination> IS OVERWRITTEN from <source>
+  COPY (-c) OVERWRITES <destination> using <source>.
 
   If <source> and <destinatio> are /dev entries for block storage devices
   <destination> becomes a clone of <source>.
 
-  Use /dev/null for <destination> to SCAN <source> producing a bad block map
-  and rate log without making a COPY.
+  Use /dev/null for <destination> to SCAN <source> producing a domain map
+  and read-rate log without making a COPY.
 
   If <source> is a /dev and <destinatio> is a plain file, destination becomes
   an image of the device.
@@ -70,42 +66,15 @@ help() {
   On macOS, use the "rdisk" form of the /dev to get fastest drive access (e.g.,
   /dev/rdisk7).
 
-DESCRIPTION
+  COPY (-c) metadata is placed in a sub-directory named <label> created in the
+  current working directory. Any existing MAP metadata for <label> is
+  sanity-checked against the specfied <source> and <destinatio>.
 
-  UNMOUNT (-u) prevents auto-moounting. This is critical to ensure the integrity
-  of COPY. If <device> is a drive, all its partitions are unmouonted (including
-  APFS containers on macOS). The GPT EFI partition is not included as it is not
-  normally auto-mounted.
-
-  MOUNT (-m) merely disables auto-mount prevention and remounts partition(s).
-
-  Note: Mount behavior under Linux systemd + udev has  subtlties such as
-  on-demand moounts and esoteric paths for mountpoints. But it can mostly be
-  left to itself. If you want to force Linux to mount use:
-
-  sudo mount -t <fs-type> -o uid=$USER,gid=$USER,force,rw <device> <directory>
-
-  MOUNT will accept a UUID without a <device> and remove an /etc/fstab entry
-  with that UUID. This is an alternative to editing /etc/fstab by hand when
-  an entry becomes orphaned.
-
-  FSCK (-f) checks and repairs supported volumes on partitions. You may, or may
-  not, want to use FSCK on <destination> if there were read errors during copy.
-  If you are attempting to return a drive to service with ZAP, you may want to
-  check <source>, although not necessarily. You need to think through your
-  recovery intentions to determine next steps after COPY.
-
-  COPY (-c) <source> to <destination> using ddrescue to build metadata for
-  unreadable (bad) blocks (block map) and create a rate log. This metadata is
-  placed in a sub-directory named <label> created in the current working
-  directory. Any existing MAP metadata for <label> is sanity-checked against the
-  specfied <source> and <destinatio>.
-
-  COPY RESUMES when existing block MAP data is found for the combination of
-  <label>, <source>, <destination> and ddrescue is not "Finished". COPY will
-  continue until ddrescue determines the disposition of all blocks at the
-  source. Remove (or move) the metadata directory to start over from begining of
-  the source.
+  COPY RESUMES when existing domain map data is found for the combination of
+  <label>, <source>, <destination> and ddrescue has not previously marked the
+  disposition of every block of the source ("Finished"). Remove (or move) the
+  metadata directory to give up on an in-progress copy and start over from
+  begining of the source.
 
   The COPY <destination> can be /dev/null which creates the effect of a SCAN
   for read errors on <source>, and produces the MAP data in <label> for use with
@@ -117,23 +86,56 @@ DESCRIPTION
   The boot drive is not allowed with COPY. (Maybe it should be allowed for
   SCAN).
 
-  -X Enables SCAN "scrape." See the GNU ddrescue documentation. To save time for
-  SCAN, scrape is disabled by default, avoiding waiting for additional reads in
-  bad areas that aren't likely to change the error afftected-files REPORT. SCAN
-  without -X implies that some blocks are not read, Which could cause REPORT
-  (-p) to list files as being affected by errors for blocks that are readble.
-  For a drive that stores large media files (MB+) unscraped areas are unlikely
-  to be part of multiple files. Scrape is enabled by default for COPY.
+  -X is passed to GNU ddrescue to enables SCAN "scrape." See the GNU ddrescue
+  documentation. To save time for SCAN, scrape is disabled by default, avoiding
+  waiting for additional reads in bad areas that aren't likely to change the
+  error afftected-files REPORT. SCAN without -X implies that some blocks are not
+  read, Which could cause REPORT (-p) to list files as being affected by errors
+  for blocks that are readble. For a drive that stores large media files (MB+)
+  unscraped areas are unlikely to be part of multiple files. Scrape is enabled
+  by default for COPY.
 
-  `-M`: is passed to ddrescue as the retrim option, which marks all failed
+  -M is passed to GNU ddrescue as the "retrim" option, which marks all failed
   blocks as untrimmed, causing them to be retried.
 
-  It's common for a failing drive to disconnectr during a COPY "scape" pass.
-  Run ddrescue-helper again with the parameters to resume.
+  It's not un-common for a failing drive to disconnect during a COPY "scape"
+  pass. Run ddrescue-helper again with the same parameters to resume.
 
-  The MAP metadata created by COPY for drives and partitions feeds REPORT, PLOT
-  and ZAP. It's unclear if bad block reallocations can be triggered through file
-  ZAP but it's allowed.
+  The domain map metadata created by COPY for drives and partitions feeds
+  REPORT, PLOT and ZAP. It's unclear if bad block reallocations can be triggered
+  through file ZAP but it's allowed.
+
+  UNMOUNT (-u) prevents auto-moounting. This is critical to ensure the integrity
+  of COPY. If <device> is a drive, all its partitions are unmouonted (including
+  APFS containers on macOS). The GPT EFI partition is not included as it is not
+  normally auto-mounted.
+
+  MOUNT (-m) merely disables auto-mount prevention and remounts partition(s).
+
+  With MOUNT, <device> can be a UUID to be removed from /etc/fstab. In certain
+  use cases, an /etc/fstab entry for a volume UUID can end up orphaned.
+
+  Note: Mount behavior under Linux systemd & udev has subtlties such as
+  on-demand moounts and esoteric paths for mountpoints, this can mostly be
+  left to itself.
+  
+  If you want to force Linux to mount to a specific mountpoint, use:
+
+    sudo mount -t <fs-type> -o uid=$USER,gid=$USER,force,rw <device> <directory>
+
+  MOUNT will accept a UUID without a <device> and remove an /etc/fstab entry
+  with that UUID. This is an alternative to editing /etc/fstab by hand when
+  an entry becomes orphaned.
+
+  FSCK (-f) checks and repairs supported volumes on partitions. You may, or may
+  not, want to use FSCK on <destination> if there were read errors during copy.
+  If you are attempting to return a drive to service with ZAP, you may want to
+  check <source>, although also not necessarily. You need to think through your
+  recovery intentions to determine next steps after COPY.
+
+  FSCK (-f) works with the following volume types:
+    macOS: FAT, ExFAT, HFS+, APFS
+    Limux: ext2/3/4, FAT, ExFAT, NTFS, HFS+
 
   REPORT (-p, -s) lists files affected by errors or slow reads recorded in the
   map metadata for <label>. SLOW is less than 1 MB/s (this should be user
@@ -163,11 +165,9 @@ DESCRIPTION
   ZAP uses dd(1). For old versions of dd(1) or systems which don't support the
   idirect and odirect flags, you may need to consider "raw" device access.
 
-  ZAPPING plain file blocks has not been well tested.
-
   MAP metadata from an unfinished COPY or DCAN can be used with REPORT and ZAP.
 
-RECOVERY OVERVIEW
+ABOUT DATA RECOVERY WITH THIS HELPER
 
   The main point of this helper is to make is easy to create a COPY a drive,
   partition or file when source media errors prevent a conventional methods.
@@ -176,41 +176,42 @@ RECOVERY OVERVIEW
 
   Making an COPY is an obvious important first step to recovery from bad blocks.
 
-  Persistent UNMOUNT ensures integrity of COPY.
+  Persistent UNMOUNT ensures the integrity of COPY.
 
-  After COPY, ddrescue output summarizes completion status and error locations.
+  After COPY, ZAP PREVIEW can show which extents are unreadable, or the domain
+  map saved in the metadata directory can be examined by hand. The GNU ddrescue
+  documentation includes a description of the domain map file format.
 
-  FSCK checks basic integrity of a destination after COPY.
+  FSCK checks volume integrity of a device after COPY or ZAP.
 
-  For some filesystems (noted above) the ddrescue read error data can be used to
   REPORT files affected by read errors and slow reads. When you are recovering a
   drive or partition, this information helps you assess the quality of the copy.
   Affected files can be restored from backup or rescued individually using this
-  helper. You could also be set affected files aside to prevent reuse of those
-  areas of the drive from being reused. by the file system.
+  helper. Or set affected files aside to prevent reuse of those areas of the
+  drive.
+  
+  (On Linux, see the badblocks(8) utility and its integration with ext2/3/4
+  fsck.)
 
-  If you can't access a volume at all, bad blocks can be ZAPPED which may
-  trigger a spinning drive to re-allocated them. This might return a drive with
-  a small number of baad blocks to service. ZAP read tests blocks before writing
-  them. The risk of ZAPPING is low because the blocks are already unreadable.
-  However, whem bad blocks get re-allocated, this can lead to subsequent events
-  which are dangerous to data if the bad blocks were occupied by key filesystem
-  metadata.
+  If you can't access a volume at all, bad blocks can be ZAPPED which may allow
+  them to be read. This can return a drive with a small number of bad blocks to
+  service. ZAP read tests blocks before writing them, so the risk of ZAPPING is
+  low because the target blocks are already unreadable. However, whem bad blocks
+  are made readble this can lead to subsequent events which are dangerous to
+  other data.
 
   Note that the concerns for making a COPY are completely seperable from the
-  concerns of REPORTs about affected-files, FSCK and ZAPPING. You have to fit
-  the puzzle pieces together.
+  concerns of REPORTING of affected-files, FSCK and ZAPPING. You have to fit
+  the puzzle-pieces together.
 
-  Forensics is a complex topic beyond the scope of this script.
-
-THIS SCRIPT DEPENDS ON
-  Bash V3+
+DEPENDENCIES
+  Bash V3 or later.
 
   GNU ddrescue
     macOS: Use [ macports | brew ] install ddrescue
     Linux: Available via standard repositories as gddrescue.
 
-  Linux systemd, udev (this should not be neccessary but no way to test for now)
+  Linux systemd, udev for UNMOUNT/MOUNT
 
   On macOS, FSCK supports for HFS+, msdos, and ExFAT (and APPS) volumes.
   macOS REPORT supports HFS+.
@@ -227,8 +228,6 @@ ALSO SEE
 
 SOURCE OF THIS SCRIPT
   https://github.com/c-o-pr/ddrescue-helper
-
-by /wire 2024
 EOF
 }
 

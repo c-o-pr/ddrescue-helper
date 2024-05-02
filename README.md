@@ -303,76 +303,77 @@ A growing list of fixes and improvements are under consideration.
 
 **General**
 
-- [ ] ADD Option to purge caches before COPY source file to file (purge auto before COPY file to /dev/null)
-- [ ] ADD report of irrelevant command-line options
-- [ ] ADD Mount device to chosen dir
+- [ ] XXX Review Linux systemd/udev dependencies for mount/umount.
+- [ ] ADD Option to purge caches before COPY source file to file (purge auto before COPY file to /dev/null).
+- [ ] ADD report of irrelevant command-line options.
+- [ ] ADD Mount device to chosen dir.
 - [ ] ADD auto-detection and installation of supporting tools on Linux.
-- [ ] ADD selectable rate limit for -P
-- [ ] ADD Output a uniquely-named summary of unreadable blocks in output of -Z, inc failed retry
+- [ ] ADD selectable rate limit for -P.
+- [ ] ADD Output a uniquely-named summary of unreadable blocks in output of -Z, inc failed retry.
 - [ ] ADD Save the ddrescue work summaries for each run so that progress can be examined.
 - [ ] ADD Input a list of files to copy (source) and a tree of metadata.
-- [ ] ADD pass additional options to ddrescue
-- [ ] ADD Option to ZAP even if READ test succeeds
-- [x] XXX Test zap of a file (Can work)
-- [x] ADD 4K block size option to ddrescue for 4K Advanced Format Drives
-- [x] ADD System detection of ddrescue version or options: ADDED check for direct I/O capability but not a comprehensive version review
-- [x] ADD ZAP slow reads
-- [x] XXX Normalize get_fs_type
-- [x] XXX The warning for ZAP overlapping format data structures needs to be device format aware-- drive versus volume
+- [ ] ADD pass additional options to ddrescue.
+- [ ] ADD Option to ZAP even if READ test succeeds.
+- [x] XXX Test zap of a file (works).
+- [x] ADD 4K block size option to ddrescue for 4K Advanced Format Drives.
+- [x] ADD System detection of ddrescue version or options: ADDED check for direct I/O capability but not a comprehensive version review.
+- [x] ADD ZAP slow reads.
+- [x] XXX Normalize get_fs_type.
+- [x] XXX The warning for ZAP overlapping format data structures needs to be device format aware-- drive versus volume.
 - [x] ADD Improve situational awareness of the EFI service partition re MBR
 - [x] ADD fsck whole drive format vs. volumes.
-- [x] ADD -p -z -Z checks for unmanageably large numbers of problem blocks in the map
-- [x] ADD zap preview and confirmation
+- [x] ADD -p -z -Z checks for unmanageably large numbers of problem blocks in the map.
+- [x] ADD zap preview and confirmation.
 - [x] ADD -z print a summary of LBA extents affected by read-errors This is a sanity check for -Z. Large areas of errors indicates a failed drive and zapping is impractical.
-- [x] ADD prettify the output of -Z and save it in a log
-- [x] XXX Fix src/dst relative file path naming to be per CWD not the label folder
-- [x] ADD Sanity checks for src/dst aliases and symlinks
-- [x] ADD Check for source file is newer than dest file
-- [x] ADD Check for <file> to <file> if destination is directory
-- [x] XXX identical source / dest check needs to consider different paths to same resource
+- [x] ADD prettify the output of -Z and save it in a log.
+- [x] XXX Fix src/dst relative file path naming to be per CWD not the label folder.
+- [x] ADD Sanity checks for src/dst aliases and symlinks.
+- [x] ADD Check for source file is newer than dest file.
+- [x] ADD Check for <file> to <file> if destination is directory.
+- [x] XXX identical source / dest check needs to consider different paths to same resource.
 - [x] XXX -s Slow reads extent spread for coverage vs block quantity.
-- [x] XXX -p -s Adjust partition offset based on device specified
-- [x] ADD rate-log reporting for slow areas and related files
-- [x] ADD check for map match to source / desk
+- [x] XXX -p -s Adjust partition offset based on device specified.
+- [x] ADD rate-log reporting for slow areas and related files.
+- [x] ADD check for map match to source / desk.
 
 **Drive Format**
 
-- [ ] ADD option to save and restore of partition table via file saved with metadata
-- [ ] ADD HFS+ Alternate Volume Header recovery
-- [ ] ADD Partition superblock recovery
+- [ ] ADD option to save and restore of partition table via file saved with metadata.
+- [ ] ADD HFS+ Alternate Volume Header recovery.
+- [ ] ADD Partition superblock recovery.
 - [x] ADD MBR vs GPT awareness?
 
 ***Mac & Filesystem Support***
 
-- [ ] XXX Investigate limits of APFS partition cloning
+- [ ] XXX Investigate limits of APFS partition cloning.
 - [ ] ADD Force use of /dev/rdisk on macOS for speed.
 - [ ] ADD help for changing volume LABELs and partition/volume UUIDs
 /System/Library/Filesystems/TYPE.fs/Contents/Resources/TYPE.util -s rdisk21s10
-No "/dev", -s to set new random UUID
-- [x] ADD APFS fsck
-- [x] ADD FAT, exFAT fsck
+No "/dev", -s to set new random UUID.
+- [x] ADD APFS fsck.
+- [x] ADD FAT, exFAT fsck.
 
 **Linux Mainline**
 
-- [x] ADD Linux zap (via hdparm)
-- [x] ADD -m -u -c -p -s -z on Linux
+- [x] ADD Linux zap (via hdparm).
+- [x] ADD -m -u -c -p -s -z on Linux.
 
 **Linux FAT, ExFAT**
 
-- [x] ADD FAT, ExFAT file lookup and fsck (optional dostools)
+- [x] ADD FAT, ExFAT file lookup and fsck (optional dostools).
 
 **Linux NTFS**
 
-- [ ] ADD option to copy using ntfsclone
-- [ ] ADD Linux ddrutility support to full partition / drive copy for NTFS
-- [x] ADD NTFS fsck (ntfsprogs: ntfsfix)
-- [x] ADD NTFS reports (ntfsprogs: ntfscluster)
+- [ ] ADD option to copy using ntfsclone.
+- [ ] ADD Linux ddrutility support to full partition / drive copy for NTFS.
+- [x] ADD NTFS fsck (ntfsprogs: ntfsfix).
+- [x] ADD NTFS reports (ntfsprogs: ntfscluster).
 
 **Linux EXT2/3/4**
 
-- [ ] ADD Option to pass error blocklist to fsck -l (set aside blocks)
-- [x] ADD ext2,3,4 file lookup and fsck
-- [x] ADD ext2,3,4 reports
+- [ ] ADD Option to pass error blocklist to fsck -l (set aside blocks).
+- [x] ADD ext2,3,4 file lookup and fsck.
+- [x] ADD ext2,3,4 reports.
 
 ## TODOS DOCUMENTATION
 
@@ -381,66 +382,66 @@ read vs write failure. macOS appears to read / write some other area of the driv
 - [ ] ADD Explain about ZAP extend and macOS likely requesting greater than 1 block for dd single block input.
 - [ ] ADD Explanations about how to read the map, the support metadata, and the thinking about blocklists, extents, and blocksize considerations.
 - [ ] ADD Explanations about modern vs older versions of Linux.
-- [ ] ADD Explanation about APFS and bootdrive exclusions
+- [ ] ADD Explanation about APFS and bootdrive exclusions.
 - [ ] ADD help with removal of stale fstab entires for the destination after copy is complete.
 - [ ] ADD Explain GPT vs other partitioning implications.
 - [ ] XXX Explain unmount on macOS & Linux, incl volume UUIDs, read-only,
 interactions with systemd, etc.
-- [ ] XXX Assistance for thinking about corrupted volumes
-- [ ] ADD Explain volume UUID edge-cases
+- [ ] XXX Assistance for thinking about corrupted volumes.
+- [ ] ADD Explain volume UUID edge-cases.
 - [ ] XXX After cloning a drive or partition, the clone(s) are distinguished only be /dev/ entry. The /dev/ entries for the partitions are likely to be re-enumerated if the drive is disconnected (e.g, USB) and the drive entry may be as other devices come and go. When mounting remove the fstab entry only if it includes the /dev/ entry as well as the UUID.
 - [ ] XXX Explain the importance of unmount and hazards of remount.
-- [ ] ADD Explanation of the ESP
+- [ ] ADD Explanation of the ESP.
 - [ ] ADD basics of ddrescue, and device specification, inc. hazards
-- [ ] XXX Device id in OS may change between runs
-- [ ] XXX Encrypted drives not considered
-- [ ] XXX -u works for device with intact accessible partition volume metadata but drive errors on metadata may cause a lockup before processing. Cover this in the usage notes
+- [ ] XXX Device id in OS may change between runs.
+- [ ] XXX Encrypted drives not considered.
+- [ ] XXX -u works for device with intact accessible partition volume metadata but drive errors on metadata may cause a lockup before processing. Cover this in the usage notes.
 
 ## TODOS ROBUSTNESS
 
 - [ ] XXX Do not purge caches by default for ZAP as these may assist recovery steps down range.
-- [ ] XXX Double check alignment of extents in ZAP
+- [ ] XXX Double check alignment of extents in ZAP.
 - [ ] ADD A set of pre-defined block contents to be used with ZAP instead 
-of /dev/zero
-- [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive
-- [ ] ADD Other file system types alternate format recovery options
-- [ ] ADD Linux UUID reset (macOS tools are unreliable)
-- [ ] ADD Consistency checks for volume names matching map metadata
+of /dev/zero.
+- [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive.
+- [ ] ADD Other file system types alternate format recovery options.
+- [ ] ADD Linux UUID reset (macOS tools are unreliable).
+- [ ] ADD Consistency checks for volume names matching map metadata.
 - [ ] XXX For partitions, check that device partition label matches the map.
-- [ ] XXX Devices must be "/dev/" specced although this could be inferred--normalize
+- [ ] XXX Devices must be "/dev/" specced although this could be inferred--normalize.
 - [ ] XXX Verify LABEL tolerates whitespace or disallow.
 - [ ] XXX Ensure no volume metadata dependencies for pathological case.
 - [ ] ADD /dev/ specific fstab entries to prevent auto-mount; including adding and removal without a corresponding drive present.
-- [ ] ADD Detection of Linux systemd support for auto-unmounting
+- [ ] ADD Detection of Linux systemd support for auto-unmounting.
 - [ ] XXX Reports inconsistent about inclusion of all blocks vs. summary between macOS and Linux.
-- [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z
-- [ ] ADD comparison of data between ZAP write and re-read
-- [ ] XXX Option handling is bone-headed, refactor
+- [ ] ADD improve signal handling for suspend / resume / abort of helper. currently ^C doesn't work after ^Z.
+- [ ] ADD comparison of data between ZAP write and re-read.
+- [ ] XXX Option handling is bone-headed, refactor.
 - [ ] XXX is_device() (actual) needs to be distinguished from is /dev
 - [ ] XXX CHECK FOR EXISTING MATCHING MAP -- CAN'T DETECT source v. destination reversal or ambiguity.
 - [ ] XXX The -Z zap read test relies on dd exit status. Better to inspect the block read for contents?
-- [ ] ADD Regression test suite
-- [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the map file due to ambiguous whitespace
+- [ ] ADD Regression test suite.
+- [ ] ADD A metadata side store for source / dest paths as these can't easily be parsed out of the map file due to ambiguous whitespace.
 - [ ] XXX When a partition is cloned, its volume UUID needs to be updated, but no utility to does this in Ventura+ (Linux?). CCC used to offer a helper; now it's a UI option.
 - [ ] ADD Provision for a global persistent no-mount that is not dependent on reading device data so that OS doesn't make a bad volume worse before copying.
 - [ ] ADD zap blocklist sanity check for drive/part metadata regions, per device format.
 - [ ] XXX For -p -s Figure out a way to look up src/dst devices from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
 - [x] XXX Fix volume -u -m UUID edge case handling to Linux only.
-- [x] XXX Use stat(1) to check for src/dst hard links
-- [x] ADD copy destination overwrite confirmation
+- [x] XXX Use stat(1) to check for src/dst hard links.
+- [x] ADD copy destination overwrite confirmation.
 
 ## TODOs Code
-- [ ] XXX Replace vi(1) with ex(1) in macOS -m -u
+- [ ] XXX Replace vi(1) with ex(1) in macOS -m -u.
 - [ ] XXX For -p -s Figure out a way to look up target device from map file, when input/output devices and Label could include whitespace. Anchor matches using "/dev/".
-- [x] shellcheck review (first pass)
+- [x] shellcheck review (first pass).
 - [x] Refactor blocklist creation to better separate ext2/3/4 report
 generation which requires block address to be in filesystem blocks not
 device blocks, while partition offsets are always device blocks.
 
 ## TODOS DRIVE LOGIC
 
-- [ ] XXX Revisit SMART scanning
-- [x] XXX Revisit dd --odirect / --idirect options
+- [ ] XXX Revisit SMART scanning.
+- [x] XXX Revisit dd --odirect / --idirect options.
 - [x] XXX -Z Blocksize and zap alignment on 4K Advanced Format drives???
 
 # SUPPORTING DOCUMENTATION
