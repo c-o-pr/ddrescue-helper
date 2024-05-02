@@ -249,21 +249,18 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 >
 > __USE AT YOUR OWN RISK__
 
-> [!IMPORTANT]
-> IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
->
-> My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
->
-> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
->
-> The wise have backups and simply replace a problem drive.
->
-> The frugal or bereft may want to work with janky devices at hand.
->
-> Making a terrible mistake is possible, but the skilled may be rewarded.
 
+## IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
 
+My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
 
+By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
+
+The wise have backups and simply replace a problem drive.
+
+The frugal or bereft may want to work with janky devices at hand.
+
+Making a terrible mistake is possible, but the skilled may be rewarded.
 
 # WHY I CREATED THIS HELPER
 
