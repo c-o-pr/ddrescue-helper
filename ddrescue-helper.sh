@@ -2713,7 +2713,7 @@ if $Do_Copy; then
   # Ensure the path for the metadata isn't on a mountpoint for either device.
   if check_mount "$(dirname "$Metadata_Path")" "$Copy_Source" || \
      check_mount "$(dirname "$Metadata_Path")" "$Copy_Dest"; then
-    _error "copy: Metadata may not saved on source or destination"
+    _error "copy: <label> can't be a dir on the source or destination"
     exit 1
   fi
 
