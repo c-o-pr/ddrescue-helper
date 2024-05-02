@@ -2,6 +2,8 @@
 
 **`ddrescue-helper.sh`** is a helper script for running GNU ddrescue on macOS and Linux.
 
+This script helps you, it does not think for you. Consider every action you take with this helper.
+
 # OVERVIEW
 
 `ddrescue-helper.sh` makes using GNU ddrescue easier:
@@ -45,21 +47,25 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 `ddrescue_helper.sh -u | -m | -f <device>`
 
-`-u, -m` include updating `/etc/fstab` (using `vifs(8)` on macOS) to make devices ready to be copied without interference from the auto-mount capabilities of the OS. `-u` prevents auto-mount after unmount. `-m` re-enables auto-mount after mount.
+`-u` prevents auto-mount after unmount.
+
+`-m` re-enables auto-mount after mount and remounts.
 
 `-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate to check / repair volume integrity after making a copy or zapping.
+
+`-u, -m` include updating `/etc/fstab` (using `vifs(8)` on macOS). On Linux fstab changes are observed by `udev` and may cause automatic mount / umount events.
 
 > [!NOTE]
 > If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted using this script, but this is the common case.
 >
 > UNMOUNT ignores the GPT EFI Service Partition as it is not mounted by default.
 >
-> On macOS, containers are observed.
->
 > An `/etc/fstab` entry can become orphaned if unmounted with `-u` after which the partition is reformatted or overwritten as a copy destination. With `-m`, you can supply a volume UUID as `<device>`to remove an entry from /etc/fstab (no attempt to mount is made). Or, you can run `vifs` to do anything you want to `/etc/fstab` by hand.
 >
 > If you need a general purpose mount inhibitor for macOS which works for all devices, including disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
 > Note: Disk Arbitrator hasn't been updated since 2017. On macOS Ventura it works to properly inhibit auto-mounts, but a UI bug prevents its Quit from working, so you have to kill it by hand.
+>
+> On macOS, containers are observed.
 
 ### 2. COPY / SCAN
 
@@ -81,7 +87,7 @@ Runs `ddrescue` to scan a device or recover data, generating a MAP of read-error
 
 - COPY a file to another file.
 
-SCAN reads `<source>` to build the bad block MAP and rate-log without saving device data.
+SCAN reads `<source>` to build the bad block MAP and rate-log without saving device data so you can run REPORT, PLOT, and ZAP.
 
 COPY saves the data on `<source>` at `<destination>`. COPY is destructive to data on `<destination>`. Basic consistency checks are performed to avoid some common hazards.
 
@@ -91,6 +97,9 @@ COPY saves the data on `<source>` at `<destination>`. COPY is destructive to dat
 
 Scraping explanation: By default. `ddrescue` uses large reads to speed copy progress. When it gets a read-error it marks the large area as an error and continues to obtain as much as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the bad blocks. In a third pass, it "scrapes" each block in the trimmed area to collect as much data as possible leaving a preview MAP of bad blocks. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and not worth the effort because files can be large relative to the bad region, and ZAP will test each block. `-X` enables `ddrescue` scraping for SCAN, to try to refine the resolution of small files affected by blocks.
 See the GNU ddrescue manual.
+
+> [!NOTE]
+> COPY/SCAN be stopped with ^C, then resumed by re-running the same helper command.
 
 ### 3 REPORT affected files, PLOT performance and ZAP blocks
 
@@ -111,7 +120,7 @@ REPORT works for macOS HFS+, and for Linux ext2/3/4. NTFS, and HFS+ (you may nee
 > [!TIP]
 > REPORT is partition (volume) oriented. If you have `GNU ddrescue` metadata for a whole drive, you can use it. A partition offset will be automatically calculated.
 >
-> PLOT outputs to a dumb terminal using Gnuplot, so no reader is needed to view a plot.
+> PLOT `-q` can give you a sense of the overall health of a drive. If it has large slow regions, that may be a sign of impending head failure. PLOT outputs to a dumb terminal using Gnuplot, so no reader is needed to view a plot.
 
 `ddrescue_helper.sh -z | -Z [ -K ] <label> <target>`
 
@@ -125,7 +134,15 @@ REPORT works for macOS HFS+, and for Linux ext2/3/4. NTFS, and HFS+ (you may nee
 
 ZAP can allow recovery of access to areas with bad blocks, and may enable access to a volume that can't be accessed due to a read-error in a critical data structure.
 
-# HELPER EXAMPLES
+> [!NOTE]
+> ZAP `-z` can be used on file source as well as a drive or partition.
+>
+> When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks. This may be more effective at overcoming read-errors.
+>
+> When COPYING or ZAPPING, read-errors cannot be repaired, but a small error region may be tolerable as compared to alternative of losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
+>
+
+# COMMAND EXAMPLES
 ```
 ######
 # If working with a drive or partition,
@@ -139,16 +156,17 @@ ddrescue-helper.sh -h
 # COPY /dev/src to /dev/dst, creating metadata saved in a dir named ./X
 ddrescue-helper.sh -c X /dev/src /dev/dst
 
-# Or SCAN /dev/src, only creating metadata
-ddrescue-helper.sh -c X /dev/src /dev/null
-
 # COPY source to a file (image)
 ddrescue-helper.sh -c X /dev/src src.img
 
-# Or SCAN / COPY file to file
+# COPY file to file
 ddrescue-helper.sh -c X file1 /dev/null
-# Wise to place file2 on another device.
-ddrescue-helper.sh -c X file1 /Volumes/XXX/file2
+
+# It's wise to place file2 on another device.
+ddrescue-helper.sh -c X file1 /Volumes/XYZ/file2
+
+# SCAN /dev/src, only creating metadata
+ddrescue-helper.sh -c X /dev/src /dev/null
 
 # Review ddrescue output for the SCAN or COPY.
 # The file X/X.map is ddrescue's block list. It is human readable.
@@ -215,19 +233,6 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 > The script was developed using old bash v3.2 to make it compatible with macOS. It should work with all newer bash.
 >
 > It's been tested on Mac OS 10.14 Mojave on macOS Ventura, Ubuntu 23.10 and Mint 21.2.
-
-> [!NOTE]
-> SCAN means to COPY `-c` to `/dev/null` for the purpose of creating a MAP of extents with read-errors and a read rate-log for slow areas. SCAN surveys a source without rescuing any data, so you can run REPORT, PLOT, and ZAP
->
-> COPIES and SCANS can be stopped with ^C and resumed by rerunning the same helper command. It's also restartable after drive disconnection or system crash.
->
-> PLOT `-q` can give you a sense of the overall health of a drive. If it has large slow regions, that may be a sign of impending head failure.
->
-> ZAP `-z` can be used on file source as well as a drive, and can have the effect of causing a sector re-allocation.
->
-> When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks to get the drive to re-allocate the sector.
->
-> When rescuing or ZAPPING, read-errors cannot be repaired, but a small error region may be tolerable as compared to alternative of losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
 
 > [!CAUTION]
 > Working with a /dev implies access to critical format data structures.
