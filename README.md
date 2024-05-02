@@ -1,99 +1,41 @@
 # DDRESCUE-HELPER
 
-**`ddrescue-helper.sh`** is a helper script for running GNU ddrescue.
+**`ddrescue-helper.sh`** is a helper script for running GNU ddrescue on macOS and Linux.
 
-For macOS and Linux.
+# OVERVIEW
 
-## ABOUT GNU DDRESCUE
-
-GNU `ddrescue` is a utility for copying drives, partitions, or files in a way that gracefully handles media read-errors, allowing as much data as possible to be recovered from the source. It's restartable and continues with previous progress until all device blocks are accounted for.
-
-A side effect of running `ddrescue` is the creation of two kinds of metadata for the copy source:
-- A "domain map" (MAP) of device extents with read-errors.
-- A read-rate log of read performance measured second-by-second.
-
-`ddrescue-helper.sh` uses this metadata for its features.
-
-# DDRESCUE-HELPER SUMMARY & PURPOSE
-
-`ddrescue-helper.sh` makes using GNU ddrescue easier. It hides details of the GNU ddrescue command, ensures that source and destination volumes are unmounted during COPY, and performs simple consistency checks.
+`ddrescue-helper.sh` makes using GNU ddrescue easier:
+- It hides details of the GNU ddrescue command,
+- ensures that source and destination volumes are unmounted during COPY, and
+- performs simple consistency checks.
 
 The script is controlled by commandline options offering the following functionality:
 
-- UNMOUNT, MOUNT, and FSCK volumes on a partition or whole-drive basis. Unmount is persistent based on `/etc/fstab` entry for the volume UUID.
-- COPY (or SCAN) a drive, partition, or single file using ddrescue. This creates a BAD BLOCK MAP and READ RATE LOG (metadata) which are stored in directory named by a user-supplied LABEL. UNMOUNT is performed automatically upon COPY. MOUNT and FSCK must be performed explicitly.
-- REPORT files affected by read-errors and slow-reads using ddescue domain map metadata and helper tools for supported filesystems. On macOS REPORT works with HFS+. On Linux REPORT works with NTFS, ext2/3/4, and HFS+.)
-- ZAP device blocks associated with read-errors to try to make those blocks readable. This offers the potential to regain access to a filesystem that is otherwise unmountable, or access an affected file in situ. Options allow preview of the block addresses to be ZAPPED, and to ZAP in 4K blocks rather than the default 512-byte blocks.
-- PLOT a simple graph of read rates over time for COPY / SCAN.
+`-u -m -f` UNMOUNT, MOUNT, and FSCK volumes on a partition or whole-drive basis. Unmount is persistent based on `/etc/fstab` entry for the volume UUID. This prevents disturbance of volume structures while recovery is in progress
 
-# USAGE FACTORS
+`-c` COPY (or SCAN) a drive, partition, or single file using ddrescue. This creates a domain-MAP and read-rate log (metadata) which are stored in directory named by a user-supplied LABEL. 
 
-— Prevent disturbance of volume structures while recovery is in progress (UNMOUNT).
+Unmount is performed automatically upon copy. Mount and fsck must be performed explicitly.
 
-— Recover as much data as possible when no backup exists (COPY).
+`-p -s` REPORT files affected by read-errors and slow-reads using ddescue domain map metadata and helper tools for supported filesystems.
 
-— Generate metadata for REPORTS, PLOT and ZAP without making a copy.
+On macOS REPORT works with HFS+. On Linux REPORT works with NTFS, ext2/3/4, and HFS+.
 
-— Know which files are affected by read-errors (REPORTS & PLOT).
+`-Z` ZAP device blocks associated with read-errors to try to make those blocks readable. This offers the potential to regain access to a filesystem that is otherwise unmountable, or access an affected file in situ.
 
-— Coaxing a drive to make extents with read errors, readable (ZAP).
+Options allow preview of the block addresses to be ZAPPED, and 4K blocks rather than the default 512-byte blocks for use with Advanced Format Drives.
 
-— Checking and repairing filesystem structure to recover from corruption associated with re-allocated blocks (FSCK).
+`-q` PLOT a simple graph of read-rates over time.
 
-`ddrescue-helper.sh` assists as follows:
+## ABOUT GNU DDRESCUE
 
-- Simplifies operation of GNU `ddrescue` by hiding standard options and performing consistency checks.
+`GNU ddrescue` is a utility for copying drives, partitions, or files in a way that gracefully handles media read-errors, allowing as much data as possible to be recovered from the source. It's restartable and continues with previous progress until all device blocks are accounted for.
 
-- Keeps `ddrescue` metadata in a named folder (LABEL) and checks that any existing domain MAP agrees with command-specific source and destination devices or files.
+A side effect of running `GNU ddrescue` is the creation of two kinds of metadata for the copy source:
+1. A domain map (MAP) of device extents with read-errors.
+2. A read-rate log of read performance measured second-by-second.
 
-- Autmatucally persistently UNMOUNTs volumes to ensure that drive or partition isn't changed by the OS while a GNU ddrescue running. Support manual re-mount a drive or partition and disable persistent auto-mount prevention.
-
-- COPY (or SCAN) drive-to-drive, drive-to-file (image), or file-to-file.
-
-- For macOS HFS+ volumes and Linux ext2/3/4, NTFS, and HFS+ volumes, the helper can REPORT files affected by read-errors and slow reads.
-
-- Extents with read-errors can be "ZAPPED" to attempt to make them readable. This can side-step I/O errors that stand in the way of other operations. For example, regain access a volume that's inaccessible due to read-errors in filesystem metadata.
-
-> [!NOTE]
-> SCAN means to COPY `-c` to `/dev/null` for the purpose of creating a MAP of extents with read-errors and a read rate-log for slow areas. SCAN surveys a source without rescuing any data, so you can run REPORT, PLOT, and ZAP
->
-> COPIES and SCANS can be stopped with ^C and resumed by rerunning the same helper command. It's also restartable after drive disconnection or system crash.
->
-> PLOT `-q` can give you a sense of the overall health of a drive. If it has large slow regions, that may be a sign of impending head failure.
->
-> ZAP `-z` can be used on file source as well as a drive, and can have the effect of causing a sector re-allocation.
->
-> When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks to get the drive to re-allocate the sector.
->
-> When rescuing or ZAPPING, read-errors cannot be repaired, but a small error region may be tolerable as compared to alternative of losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
-
-> [!CAUTION]
-> Working with a /dev implies access to critical format data structures.
->
-> COPYING a /dev to another /dev wipes the destination.
->
-> Copying /dev to /dev when device sizes don't match is inherently tricky. Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. Thoroughly consider what you are doing at a systems level.
->
-> ZAP only operates on blocks marked as unreadable by `GNU ddrescue` MAP, and it read-tests blocks before attempting to overwrite, so it's safe. But a ZAP of /dev can set in motion other failure modes. Be ready to deal with the consequences.
->
-> ZAP of a file only affects the data for that file, so this is relatively safe.
->
-> This script has been coded with care, but unexpected behaviors are possible. Shell scripts are pesky because they rely heavily on text substitution.
->
-> __USE AT YOUR OWN RISK__
-
-> [!IMPORTANT]
-> IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
->
-> My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
->
-> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
->
-> The wise have backups and simply replace a problem drive.
->
-> The frugal or bereft may want to work with janky devices at hand.
->
-> Making a terrible mistake is possible, but the skilled may be rewarded.
+`ddrescue-helper.sh` takes advantage of this metadata for its features.
 
 # DDRESCUE COMMAND DETAILED DESCRIPTION
 
@@ -267,10 +209,56 @@ Homebrew or Macports: `ddrescue` `gnuplot`
 
 Key Linux system dependencies are `udev` and `systemd` to handle device mounts. These subsystems have been common on Linux for 10+ years.
 
+## NOTES & WARNINGS
+
 > [!IMPORTANT]
 > The script was developed using old bash v3.2 to make it compatible with macOS. It should work with all newer bash.
 >
 > It's been tested on Mac OS 10.14 Mojave on macOS Ventura, Ubuntu 23.10 and Mint 21.2.
+
+> [!NOTE]
+> SCAN means to COPY `-c` to `/dev/null` for the purpose of creating a MAP of extents with read-errors and a read rate-log for slow areas. SCAN surveys a source without rescuing any data, so you can run REPORT, PLOT, and ZAP
+>
+> COPIES and SCANS can be stopped with ^C and resumed by rerunning the same helper command. It's also restartable after drive disconnection or system crash.
+>
+> PLOT `-q` can give you a sense of the overall health of a drive. If it has large slow regions, that may be a sign of impending head failure.
+>
+> ZAP `-z` can be used on file source as well as a drive, and can have the effect of causing a sector re-allocation.
+>
+> When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks to get the drive to re-allocate the sector.
+>
+> When rescuing or ZAPPING, read-errors cannot be repaired, but a small error region may be tolerable as compared to alternative of losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
+
+> [!CAUTION]
+> Working with a /dev implies access to critical format data structures.
+>
+> COPYING a /dev to another /dev wipes the destination.
+>
+> Copying /dev to /dev when device sizes don't match is inherently tricky. Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. Thoroughly consider what you are doing at a systems level.
+>
+> ZAP only operates on blocks marked as unreadable by `GNU ddrescue` MAP, and it read-tests blocks before attempting to overwrite, so it's safe. But a ZAP of /dev can set in motion other failure modes. Be ready to deal with the consequences.
+>
+> ZAP of a file only affects the data for that file, so this is relatively safe.
+>
+> This script has been coded with care, but unexpected behaviors are possible. Shell scripts are pesky because they rely heavily on text substitution.
+>
+> __USE AT YOUR OWN RISK__
+
+> [!IMPORTANT]
+> IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
+>
+> My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
+>
+> By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
+>
+> The wise have backups and simply replace a problem drive.
+>
+> The frugal or bereft may want to work with janky devices at hand.
+>
+> Making a terrible mistake is possible, but the skilled may be rewarded.
+
+
+
 
 # WHY I CREATED THIS HELPER
 

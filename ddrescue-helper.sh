@@ -125,7 +125,7 @@ DESCRIPTION
   For a drive that stores large media files (MB+) unscraped areas are unlikely
   to be part of multiple files. Scrape is enabled by default for COPY.
 
-  `-M`: is passed to ddrescue as the retrim option, which marks all failed 
+  `-M`: is passed to ddrescue as the retrim option, which marks all failed
   blocks as untrimmed, causing them to be retried.
 
   It's common for a failing drive to disconnectr during a COPY "scape" pass.
@@ -329,7 +329,7 @@ get_OS() {
   elif which lsblk > /dev/null; then
     echo "Linux"
   else
-    echo "(unknown)"
+    echo "(Unknown host OS)"
   fi
 }
 
@@ -401,8 +401,8 @@ is_uuid() {
       return 1
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 
   return 1
@@ -417,8 +417,8 @@ dd_supports_direct_io() {
       dd --help | grep -F "direct I/O" > /dev/null 2>&1
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -530,14 +530,13 @@ zap_sequence() {
   # reading because write failure is more indicative of bad drive health
   # than read failure. If write doesn't succeed there's no hope for ZAP.
   #
-  # reading because it's likely to be 
-  # If the last block in the extent either fails or is slow,
-  # extend the range of ZAP up to max_extend blocks.
+  # reading because it's likely to be If the last block in the extent either
+  # fails or is slow, extend the range of ZAP up to max_extend blocks.
   #
   for ((c = 1; c <= range; c++)); do
-  
+
     this_io_failed=false
-    
+
     if ! $last_io_failed; then
       printf "  %d [0x%X] read" "$block" "$block"
       # Time plus time for a slow read
@@ -1350,8 +1349,8 @@ flush_io() {
       _info echo "done"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1367,8 +1366,8 @@ get_inode() {
       stat --printf %i "$path"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1385,8 +1384,8 @@ get_symlink_target() {
       return 1
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1415,8 +1414,8 @@ get_alias_target() {
       return 1
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1433,8 +1432,8 @@ get_partition_table_type() {
       lsblk --raw -n -d -o PTTYPE "$device"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 EOF
@@ -1453,8 +1452,8 @@ get_partition_uuid() {
       return 1
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1482,8 +1481,8 @@ get_volume_uuid() {
       fi
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1500,8 +1499,8 @@ get_volume_name() {
       lsblk -n -d -o LABEL "$device"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1547,8 +1546,8 @@ get_device_format() {
       fi
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 
   if [ -z "$format" ]; then
@@ -1573,8 +1572,8 @@ get_device_blocksize() {
       lsblk --raw -n -d -o PHY-SEC "$device" # --raw no whitespace
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1598,8 +1597,8 @@ get_fs_blocksize_for_file_lookup() {
       fi
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1625,8 +1624,8 @@ is_mounted() {
       return
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1641,8 +1640,8 @@ is_hfsplus() {
       [ "$(get_device_format "$device")" == "hfsplus" ]
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1657,8 +1656,8 @@ is_ntfs() {
       [ "$(get_device_format "$device")" == "ntfs" ]
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1673,8 +1672,8 @@ is_ext() {
       [[ "$(get_device_format "$device")" =~ ^ext[234]$ ]]
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1709,8 +1708,8 @@ is_device() {
       fi
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1731,8 +1730,8 @@ get_device_offset() {
       offset=$(lsblk -n -d -o START "$device")
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
   if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
     _error "offset lookup failed"
@@ -1758,8 +1757,8 @@ get_device_size() {
       size=$(lsblk -b -n -d -o SIZE "$device")
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 
   if ! [[ "$size" =~ ^[0-9]+$ ]]; then
@@ -1809,8 +1808,8 @@ device_is_boot_drive() {
       [ "$(strip_partition_id "$device")" == "$boot_drive" ]
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -1826,8 +1825,8 @@ strip_partition_id() {
       echo "$device" | sed 's/[0-9][0-9]*$//'
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
       ;;
   esac
 
@@ -1982,9 +1981,10 @@ list_partitions() {
         fi
       fi
       ;;
+
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2017,8 +2017,8 @@ os_mount() {
       return 0
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2035,8 +2035,8 @@ os_unmount() {
       sudo umount "$device"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2089,8 +2089,8 @@ EOF
       return
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2128,8 +2128,8 @@ EOF
       return
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2411,8 +2411,8 @@ fsck_device() {
       ;;
 
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
@@ -2430,8 +2430,8 @@ check_mount() {
       findmnt --target "$path" | grep -F "$device"
       ;;
     *)
-      _error "unknown OS"
-      return 1
+      _error "Unknown host OS"
+      kill $$
   esac
 }
 
