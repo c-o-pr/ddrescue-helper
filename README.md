@@ -1,6 +1,6 @@
 # DDRESCUE-HELPER
 
-**`ddrescue-helper.sh`** is a helper script for running GNU ddrescue on macOS and Linux.
+**`ddrescue-helper.sh`** is a bash script for running _GNU ddrescue_ on macOS and Linux.
 
 This script helps you, it does not think for you. Consider every action you take with this helper.
 
@@ -11,15 +11,15 @@ This script helps you, it does not think for you. Consider every action you take
 - ensures that source and destination volumes are unmounted during COPY, and
 - performs simple consistency checks.
 
-The script is controlled by commandline options offering the following functionality:
+The script is controlled by command line options offering the following functionality:
 
 `-u -m -f` UNMOUNT, MOUNT, and FSCK volumes on a partition or whole-drive basis. Unmount is persistent based on `/etc/fstab` entry for the volume UUID. This prevents disturbance of volume structures while recovery is in progress
 
-`-c` COPY (or SCAN) a drive, partition, or single file using ddrescue. This creates a domain-MAP and read-rate log (metadata) which are stored in directory named by a user-supplied LABEL. 
+`-c` COPY (or SCAN) a drive, partition, or single file using ddrescue. This creates a domain map and read-rate log (metadata) which are stored in directory named by a user-supplied LABEL. 
 
 Unmount is performed automatically upon copy. Mount and fsck must be performed explicitly.
 
-`-p -s` REPORT files affected by read-errors and slow-reads using ddescue domain map metadata and helper tools for supported filesystems.
+`-p -s` REPORT files affected by read-errors and slow-reads using `GNU ddescue` domain map metadata and helper tools for supported filesystems.
 
 On macOS REPORT works with HFS+. On Linux REPORT works with NTFS, ext2/3/4, and HFS+.
 
@@ -34,7 +34,7 @@ Options allow preview of the block addresses to be ZAPPED, and 4K blocks rather 
 `GNU ddrescue` is a utility for copying drives, partitions, or files in a way that gracefully handles media read-errors, allowing as much data as possible to be recovered from the source. It's restartable and continues with previous progress until all device blocks are accounted for.
 
 A side effect of running `GNU ddrescue` is the creation of two kinds of metadata for the copy source:
-1. A domain map (MAP) of device extents with read-errors.
+1. A domain map of device extents with read-errors.
 2. A read-rate log of read performance measured second-by-second.
 
 `ddrescue-helper.sh` takes advantage of this metadata for its features.
@@ -56,11 +56,11 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 `-u, -m` include updating `/etc/fstab` (using `vifs(8)` on macOS). On Linux fstab changes are observed by `udev` and may cause automatic mount / umount events.
 
 > [!NOTE]
+> With `-m`, you can supply a volume UUID as `<device>`to remove an entry from `/etc/fstab` (no attempt to mount is made). Or, you can edit `/etc/fstab` by hand (on macOS use `vifs(8)`.)
+>
 > If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted using this script, but this is the common case.
 >
 > UNMOUNT ignores the GPT EFI Service Partition as it is not mounted by default.
->
-> An `/etc/fstab` entry can become orphaned if unmounted with `-u` after which the partition is reformatted or overwritten as a copy destination. With `-m`, you can supply a volume UUID as `<device>`to remove an entry from /etc/fstab (no attempt to mount is made). Or, you can run `vifs` to do anything you want to `/etc/fstab` by hand.
 >
 > If you need a general purpose mount inhibitor for macOS which works for all devices, including disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
 > Note: Disk Arbitrator hasn't been updated since 2017. On macOS Ventura it works to properly inhibit auto-mounts, but a UI bug prevents its Quit from working, so you have to kill it by hand.
@@ -69,17 +69,19 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 ### 2. COPY / SCAN
 
-Runs `ddrescue` to scan a device or recover data, generating a MAP of read-errors and a rate-log which records device regions that experienced read slowdown. The MAP and rate-log are stored in a folder named <label>
+Runs `ddrescue` to scan a device or recover data, generating a domain map of read-errors and a rate-log which records device regions that experienced read slowdown. The domain map and rate-log are stored in a folder named with <label>.
 
 `ddrescue_helper.sh -c [-X] <label> <source> /dev/null`
 
-- SCAN a drive, partition or file to create MAP and rate-log.
+- SCAN a drive, partition or file to create the domain map and rate-log. SCAN builds the domain map and rate-log without saving device data, so you can run REPORT, PLOT, and ZAP.
+
+`-X`: Enable `GNU ddrescue` ddrescue scraping during SCAN, scraping is disabled by default to save some time getting block list for use with REPORTS. For COPY, scraping is enabled by default to recover as much data as possible.
 
 `ddrescue_helper.sh -c [-M] <label> <deivce> <device>`
 
 - COPY a drive or partition to another device.
 
-`ddrescue_helper.sh -c [-M]  <label> <deivce> <file>`
+`ddrescue_helper.sh -c [-M] <label> <deivce> <file>`
 
 - COPY drive or partition to a file (image).
 
@@ -87,19 +89,14 @@ Runs `ddrescue` to scan a device or recover data, generating a MAP of read-error
 
 - COPY a file to another file.
 
-SCAN reads `<source>` to build the bad block MAP and rate-log without saving device data so you can run REPORT, PLOT, and ZAP.
+COPY is destructive to data on `<destination>`.
 
-COPY saves the data on `<source>` at `<destination>`. COPY is destructive to data on `<destination>`. Basic consistency checks are performed to avoid some common hazards.
-
-`-M`: is passed to ddrescue as the "re-trim" option. This marks all failed blocks as untrimmed, causing them to be retried.
-  
-`-X`: During SCAN, `ddrescue` scraping is disabled by default to save some time getting block list for use with REPORTS. For COPY, scraping is enabled by default to recover as much data as possible.
-
-Scraping explanation: By default. `ddrescue` uses large reads to speed copy progress. When it gets a read-error it marks the large area as an error and continues to obtain as much as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the bad blocks. In a third pass, it "scrapes" each block in the trimmed area to collect as much data as possible leaving a preview MAP of bad blocks. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and not worth the effort because files can be large relative to the bad region, and ZAP will test each block. `-X` enables `ddrescue` scraping for SCAN, to try to refine the resolution of small files affected by blocks.
-See the GNU ddrescue manual.
+`-M` is passed to `GNU ddrescue` as the "re-trim" option. This marks all failed blocks as untrimmed, causing them to be retried.
 
 > [!NOTE]
-> COPY/SCAN be stopped with ^C, then resumed by re-running the same helper command.
+> COPY/SCAN be stopped with ^C, then resumed by re-running the helper command.
+>
+> About "scraping": By default. `GNU ddrescue` uses large reads to speed copy progress. When it gets a read-error it marks a large area as an error and continues to to copy further data as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the an extent bounded by unreadable blocks. In a third "scrape" pass, each block in the trimmed extent is read to collect as much data as possible. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and maybe not worth the time because affected files can be large relative to the trimmed extent (REPORT) and ZAP will read test each block in any extent. See the GNU ddrescue manual.
 
 ### 3 REPORT affected files, PLOT performance and ZAP blocks
 
@@ -124,17 +121,19 @@ REPORT works for macOS HFS+, and for Linux ext2/3/4. NTFS, and HFS+ (you may nee
 
 `ddrescue_helper.sh -z | -Z [ -K ] <label> <target>`
 
+`<target>` is a device or file associated with metadata saved in `<label>`.
+
 `-z` ZAP PREVIEW. Print a list of blocks that will be affected -Z but don't ZAP. If the list is large (thousands) it's likely not productive to attempt zapping.
 
-`-Z` ZAP blocks listed as bad in the `ddrescue` MAP in an attempt to trigger the drive to reallocate them. ZAP performs a block read, and if the read reports failure it then performs a block write. The risk to existing data is low because the block is already unreadable.
+`-Z` ZAP blocks listed as bad in the domain map in an attempt to make them readable. ZAP first performs a block read, and if the read reports failure it then performs a block write. The risk to existing data is low because the ZAPPED block is unreadable to begin with.
 
-`-K` ZAP using 4096 byte blocks instead of 512 byte blocks. For use with 4K Advanced Format drives. The `smartmontools` package provides detailed information on drive capabilities.
-
-`<target>` is a device or file associated with metadata saved in `<label>`.
+`-K` ZAP using 4096-byte blocks instead of 512-byte blocks. For use with 4K Advanced Format drives. The `smartmontools` package provides detailed information on drive capabilities.
 
 ZAP can allow recovery of access to areas with bad blocks, and may enable access to a volume that can't be accessed due to a read-error in a critical data structure.
 
 > [!NOTE]
+> ZAP is for trying to make a drive with errors readable so that it can be used in situ by other tools. If your goal is to recover data, use COPY.
+>
 > ZAP `-z` can be used on file source as well as a drive or partition.
 >
 > When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks. This may be more effective at overcoming read-errors.
@@ -241,7 +240,7 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 >
 > Copying /dev to /dev when device sizes don't match is inherently tricky. Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. Thoroughly consider what you are doing at a systems level.
 >
-> ZAP only operates on blocks marked as unreadable by `GNU ddrescue` MAP, and it read-tests blocks before attempting to overwrite, so it's safe. But a ZAP of /dev can set in motion other failure modes. Be ready to deal with the consequences.
+> ZAP only operates on blocks marked as unreadable by `GNU ddrescue` domain map, and it read-tests blocks before attempting to overwrite, so it's safe. But a ZAP of /dev can set in motion other failure modes. Be ready to deal with the consequences.
 >
 > ZAP of a file only affects the data for that file, so this is relatively safe.
 >
@@ -249,10 +248,9 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 >
 > __USE AT YOUR OWN RISK__
 
-
 ## IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
 
-My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside large files that cover them. Another is to encourage the drive to re-allocate bad sectors.
+My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside files that cover them. Another is to ZAP.
 
 By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
 
@@ -262,7 +260,7 @@ The frugal or bereft may want to work with janky devices at hand.
 
 Making a terrible mistake is possible, but the skilled may be rewarded.
 
-# WHY I CREATED THIS HELPER
+# BACKGROUND ON DEVELOPMENT
 
 The idea for this helper came about from dealing with read-errors occurring during local backups of spinning drives. As mentioned above, I have found that as spinning drives fill and age, they become prone to small bad regions.
 
@@ -285,11 +283,11 @@ and `hdparm` are not available on macOS, even via 3rd-party ports.
 
 Another option is `dd(1)`. This old-school utility is available on every Unix variant and can write single blocks. Using it I found I could write a disk block with a read error and read it back (this is not just a matter of caching, although from a certain point of view it may not matter). This allowed me to regain access to an unmountable drive and recover needed contents without making a full drive copy.
 
-Entrée **GNU ddrescue**. This is an indispensable tool for recovering data from failing drives. As it works, it creates a domain MAP of unreadable extents pared down to specific bad blocks. Compared to SMART, it's far simpler and more consistent to use, it's drive hardware agnostic, and you can control scope from recovery of a whole drive, a partition, or a file, then parse the domain MAP into a bad block list for use with `dd`. This gave rise to ZAP capability.
+Entrée **GNU ddrescue**. This is an indispensable tool for recovering data from failing drives. As it works, it creates a domain map of unreadable extents pared down to specific bad blocks. Compared to SMART, it's far simpler and more consistent to use, it's drive hardware agnostic, and you can control scope from recovery of a whole drive, a partition, or a file, then parse the domain map into a bad block list for use with `dd`. This gave rise to ZAP capability.
 
 When making a partition or full drive copy, it's very important that the source and destination filesystem metadata remains in a consistent state until the copy is complete. Not only must the devices be unmounted, but copying may be interrupted by a timeout, spontaneous drive disconnection, a system crash, or you way want to intentionally stop a copy. This necessitates a prohibition on auto-mount so that copying may be resumed. Before re-mounting a volume, it's wise to check it for consistency. This gave rise to UNMOUNT, MOUNT and FSCK.
 
-While working with a problem HFS+ drive, I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to. It turns out that tools exist to do this for NTFS and ext2/3/4. `GNU ddrescue` can also generate a rate-log, which, similar to the domain MAP, can be converted into a block list and fed to filesystem tools to find files affected by drive regions with slow reads. This gave rise to the REPORT capability.
+While working with a problem HFS+ drive, I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to. It turns out that tools exist to do this for NTFS and ext2/3/4. `GNU ddrescue` can also generate a rate-log, which, similar to the domain map, can be converted into a block list and fed to filesystem tools to find files affected by drive regions with slow reads. This gave rise to the REPORT capability.
 
 PLOT is merely a parsing of the GNU ddrescue rate-log into a bar-graph formatted for a dumb terminal using gnuplot.
 
