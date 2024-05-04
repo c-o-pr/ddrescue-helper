@@ -1,6 +1,6 @@
 # DDRESCUE-HELPER
 
-**`ddrescue-helper.sh`** is a bash script for running _GNU ddrescue_ on macOS and Linux.
+**`ddrescue-helper.sh`** is a bash script for running __GNU ddrescue__ on macOS and Linux.
 
 This script helps you, it does not think for you. Consider every action you take with this helper.
 
@@ -21,7 +21,8 @@ Unmount is performed automatically upon copy. Mount and fsck must be performed e
 
 `-p -s` REPORT files affected by read-errors and slow-reads using `GNU ddescue` domain map metadata and helper tools for supported filesystems.
 
-On macOS REPORT works with HFS+. On Linux REPORT works with NTFS, ext2/3/4, and HFS+.
+On macOS REPORT works with HFS+.\
+On Linux REPORT works with NTFS, ext2/3/4, and HFS+.
 
 `-Z` ZAP device blocks associated with read-errors to try to make those blocks readable. This offers the potential to regain access to a filesystem that is otherwise unmountable, or access an affected file in situ.
 
