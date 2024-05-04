@@ -492,7 +492,7 @@ write_block() {
 
   cat /dev/null >| ./TMP
   sudo dd status=none bs=$blocksize count=1 oseek="$block" \
-    conv=notrunc if=/dev/random of="$target" $option 2> ./TMP
+    conv=notrunc if=/dev/zero of="$target" $option 2> ./TMP
   result=$?
 
   # If output is I/O error then squelch. Print other errors.

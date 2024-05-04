@@ -2,20 +2,22 @@
 
 `ddrescue-helper.sh` is a bash script for running GNU `ddrescue` on macOS and Linux.
 
-`ddrescue-helper.sh` makes using GNU `ddescue` easier:
-- It hides details of the GNU `ddrescue` command,
-- ensures that source and destination volumes are unmounted during COPY, and
-- performs simple consistency checks.
+`ddrescue-helper.sh` makes using GNU `ddescue` easier, as follows:
+- Hides details of the GNU `ddrescue` command and does usage consistency checks.
+- Ensures that source and destination volumes are unmounted during COPY.
+- Consolidates GNU `ddescue` domain map and rate-log (metadata) into a named directory.
+- Leverages the metadata to REPORT on files affected by read-errors and slow-reads, PLOT read performance, and ZAP bad blocks.
 
 The script is controlled by command line options offering the following functionality:
 
 `-u -m -f` UNMOUNT, MOUNT, and FSCK volumes on a partition or whole-drive basis. Unmount is persistent based on `/etc/fstab` entry for the volume UUID. This prevents disturbance of volume structures while recovery is in progress
 
-`-c` COPY (or SCAN) a drive, partition, or single file using GNU `ddescue`. This creates a domain map and read-rate log (metadata) which are stored in directory named by a user-supplied LABEL. 
+`-c` COPY (or SCAN) a drive, partition, or single file using GNU `ddescue`. This creates a domain map and read-rate log which are stored in the metadata directory named by a user-supplied `<label>`. 
 
-Unmount is performed automatically upon copy. Mount and fsck must be performed explicitly.
+Unmount is performed automatically for copy.\
+Mount and fsck must be performed explicitly.
 
-`-p -s` REPORT files affected by read-errors and slow-reads using GNU `ddescue` domain map metadata and helper tools for supported filesystems.
+`-p -s` REPORT files affected by read-errors and slow-reads using metadata and additional utilties for supported filesystems (See DEPENDENCIES).
 
 On macOS REPORT works with HFS+.\
 On Linux REPORT works with NTFS, ext2/3/4, and HFS+.
@@ -94,6 +96,8 @@ COPY is destructive to data on `<destination>`.
 > COPY/SCAN be stopped with ^C, then resumed by re-running the helper command.
 >
 > About "scraping": By default. GNU `ddescue` uses large reads to speed copy progress. When it gets a read-error it marks a large area as an error and continues to to copy further data as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the an extent bounded by unreadable blocks. In a third "scrape" pass, each block in the trimmed extent is read to collect as much data as possible. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and maybe not worth the time because affected files can be large relative to the trimmed extent (REPORT) and ZAP will read test each block in any extent. See the GNU `ddescue` manual.
+> [!TIP]
+> `ddrescue_helper.sh` checks that any existing domain map for `<label>` matches the targets specified on the command line. If a /dev association changes between runs, you can edit the domain map file by hand to update the device specs.
 
 ### 3 REPORT affected files, PLOT performance and ZAP blocks
 
@@ -131,12 +135,13 @@ ZAP can allow recovery of access to areas with bad blocks, and may enable access
 > [!NOTE]
 > ZAP is for trying to make a drive with errors readable so that it can be used in situ by other tools. If your goal is to recover data, use COPY.
 >
-> ZAP `-z` can be used on file source as well as a drive or partition.
+> ZAP `-z` can be used on a file source as well as a drive or partition.
 >
-> When ZAPPING a 4K Advanced Format drive, use -K to work with 4096 byte blocks. This may be more effective at overcoming read-errors.
+> When using ZAP with a 4K Advanced Format drive, use -K to access 4096-byte blocks. This may be more effective at overcoming read-errors on 4K drives.
 >
-> When COPYING or ZAPPING, read-errors cannot be repaired, but a small error region may be tolerable as compared to alternative of losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
+> ZAP cannot repair data, but a small error region may be tolerable when the alternative is losing access to the whole file (e.g., a small content loss in a media file may be acceptable.)
 >
+> ZAP sources writes from /dev/zero.
 
 # COMMAND EXAMPLES
 ```
@@ -149,59 +154,58 @@ ZAP can allow recovery of access to areas with bad blocks, and may enable access
 # Display help
 ddrescue-helper.sh -h
 
-# COPY /dev/src to /dev/dst, creating metadata saved in a dir named ./X
-ddrescue-helper.sh -c X /dev/src /dev/dst
+# COPY a macOS drive to another drive creating metadata
+# saved in a dir named ./X
+ddrescue-helper.sh -c X /dev/rdisk10 /dev/rdisk11
 
-# COPY source to a file (image)
-ddrescue-helper.sh -c X /dev/src src.img
+# COPY Linux EFI partition to a file (image)
+ddrescue-helper.sh -c X /dev/sdc1 <src>.img
 
-# COPY file to file
-ddrescue-helper.sh -c X file1 /dev/null
-
+# COPY macOS file to file
 # It's wise to place file2 on another device.
-ddrescue-helper.sh -c X file1 /Volumes/XYZ/file2
+ddrescue-helper.sh -c X file /Volumes/XYZ/file
 
-# SCAN /dev/src, only creating metadata
-ddrescue-helper.sh -c X /dev/src /dev/null
+# SCAN a whole drive on Linux, creating metadata
+ddrescue-helper.sh -c X /dev/sdb /dev/null
 
-# Review ddrescue output for the SCAN or COPY.
-# The file X/X.map is ddrescue's block list. It is human readable.
+# The GNU ddrescue domain map is a human-readable bad block list
 more X/X.map
 
-# REPORT which files are affected by read-errors on partition id=2...
-# On macOS, filesystem must be HFS+
-# On Linux, filesystem can be ext2/3/4. NTFS, and HFS+
-# If the metadata in X is for the entire drive (e.g., /dev/src),
-# the block offsets for the partition are automatically calculated.
-ddrescue-helper.sh -p X /dev/src2
+# REPORT which files are affected by read-errors on partition id 2...
+#  On macOS, filesystem must be HFS+
+#  On Linux, filesystem can be ext2/3/4. NTFS, and HFS+
+#  If the metadata in X is for the entire drive (e.g., /dev/sdb),
+#  the block offsets for the partition are automatically calculated.
+ddrescue-helper.sh -p X /dev/sdb2
 
 # REPORT which files are affected by slow reads, less that 1 MB/s.
-# 1 MB/s is an arbitrary rate hard-coded into the script. This should be
-# an option.
+# 1 MB/s is an arbitrary rate hard-coded into the script.
+# (XXX The rate should be an option.)
 ddrescue-helper.sh -s X /dev/src2
 
-# PLOT read-rate over time for the SCAN or COPY of source. No access to
-# the /dev/src is needed, the existing rate-log is used for the plot.
+# PLOT read-rate over time for the metadata in X. 
+# No device needs to be specified. The rate-log in X is used.
 ddrescue-helper.sh -q X
 
-# Preview a list of read-error blocks that can be ZAPPED
-# (blocks are 512 bytes)
-ddrescue-helper.sh -z X /dev/src
+# Preview a list blocks that can be ZAPPED
+# (blocks are 512 bytes). Device needs to be specified but doesn't need
+# to be present.
+ddrescue-helper.sh -z X /dev/sdb
 
-ZAP read-error blocks 
-ddrescue-helper.sh -Z X /dev/src
+ZAP blocks with read errors 
+ddrescue-helper.sh -Z X /dev/sdb
 
-# ZAP 4096 byte blocks for Advanced Format drive (-K)
-ddrescue-helper.sh -Z -K X /dev/src
+# ZAP 4096-byte blocks for Advanced Format drive (-K)
+ddrescue-helper.sh -Z -K X /dev/sdb
 
 # FSCK a /dev after a COPY or ZAP
-ddrescue-helper.sh -f /dev/target
+ddrescue-helper.sh -f /dev/sdb
 
 # Remove prohibition on mount of /dev/src and re-mount.
 # WARNING: If a COPY was made and the destination device is still connected,
 # it's volume UUIDs will be the same as sources and it may become auto-mounted
 # when prohibition is lifted.
-ddrescue-helper.sh -m /dev/src
+ddrescue-helper.sh -m /dev/sdb
 
 # Remove orphaned volume reference from /etc/fstab
 ddrescue-helper.sh -m <UUID>
@@ -233,9 +237,11 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 > [!CAUTION]
 > This script helps you, it does not think for you. Consider every action you take with this helper.
 >
+> Be careful about device specs: /dev associations can change with device addition and removal, or due to a reboot. DOUBLE CHECK THE TARGET FOR COPY and ZAP.
+>
 > Working with a /dev implies access to critical format data structures.
 >
-> COPYING a /dev to another /dev wipes the destination.
+> COPYING a /dev to another /dev is DESTRUCTIVE, overwriting the destination.
 >
 > Copying /dev to /dev when device sizes don't match is inherently tricky. Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. Thoroughly consider what you are doing at a systems level.
 >
