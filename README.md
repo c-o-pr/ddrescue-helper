@@ -2,8 +2,6 @@
 
 **`ddrescue-helper.sh`** is a bash script for running __GNU ddrescue__ on macOS and Linux.
 
-This script helps you, it does not think for you. Consider every action you take with this helper.
-
 # OVERVIEW
 
 `ddrescue-helper.sh` makes using GNU ddrescue easier:
@@ -235,6 +233,8 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 > It's been tested on Mac OS 10.14 Mojave on macOS Ventura, Ubuntu 23.10 and Mint 21.2.
 
 > [!CAUTION]
+> This script helps you, it does not think for you. Consider every action you take with this helper.
+>
 > Working with a /dev implies access to critical format data structures.
 >
 > COPYING a /dev to another /dev wipes the destination.
