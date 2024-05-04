@@ -36,7 +36,7 @@ A side effect of running GNU `ddescue` is the creation of two kinds of metadata 
 
 `ddrescue-helper.sh` takes advantage of this metadata for its features.
 
-# DDRESCUE COMMAND DETAILED DESCRIPTION
+# DDRESCUE-HELPER DESCRIPTION
 
 There are THREE MODES of `ddrescue-helper.sh` operation:
 
@@ -103,18 +103,18 @@ These operations utilize the GNU `ddescue` domain-map metadata produced by COPY 
 
 `-p` REPORT files affected by read-errors.
 
-`-s` REPORT files affected by slow reads, less than 1 MB/s.
+`-s` REPORT files affected by slow reads, where slow is a 1 second or longer dureation read-rate of less than 1 MB/s.
 
 `ddrescue_helper.sh -q <label>`
 
-`-q` PLOT a graph of read performance.
+`-q` PLOT to the terminal a bar graph of read performance for the read-rate log stored in the directory named by `<label>`.
 
 REPORT works for macOS HFS+, and for Linux ext2/3/4. NTFS, and HFS+ (you may need to install support packages; see DEPENDENCIES).
 
 > [!TIP]
-> REPORT is partition (volume) oriented. If you have GNU `ddescue` metadata for a whole drive, you can use it. A partition offset will be automatically calculated.
+> REPORT is partition (volume) oriented. If you have a GNU `ddescue` domain map for a whole drive, you can use it. The needed partition offset will be  calculated and applied automatically.
 >
-> PLOT `-q` can give you a sense of the overall health of a drive. If it has large slow regions, that may be a sign of impending head failure. PLOT outputs to a dumb terminal using Gnuplot, so no reader is needed to view a plot.
+> PLOT can give you a sense of the overall health of a drive. If it has large slow regions, this may be a sign of impending failure. PLOT outputs to a dumb terminal using Gnuplot, so no reader is needed to view a plot.
 
 `ddrescue_helper.sh -z | -Z [ -K ] <label> <target>`
 
@@ -206,7 +206,7 @@ ddrescue-helper.sh -m /dev/src
 # Remove orphaned volume reference from /etc/fstab
 ddrescue-helper.sh -m <UUID>
 
-# Or edit /etc/fstab by hand (e.g., vifs)
+# ...Or edit /etc/fstab by hand (e.g., vifs)
 ```
 
 ## DEPENDENCIES
