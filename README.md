@@ -33,7 +33,7 @@ Options allow preview of the block addresses to be ZAPPED, and 4K blocks rather 
 GNU `ddescue` is a utility for copying drives, partitions, or files in a way that gracefully handles media read-errors, allowing as much data as possible to be recovered from the source. It's restartable and continues with previous progress until all device blocks are accounted for.
 
 A side effect of running GNU `ddescue` is the creation of two kinds of metadata for the copy source:
-1. A domain map of device extents with read-errors.
+1. A domain map of device extents with read-error.
 2. A read-rate log of read performance measured second-by-second.
 
 `ddrescue-helper.sh` takes advantage of this metadata for its features.
@@ -46,25 +46,31 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 `ddrescue_helper.sh -u | -m | -f <device>`
 
-`-u` prevents auto-mount after unmount.
+`-u` unmounts and disables subsequent auto-mount.
 
-`-m` re-enables auto-mount after mount and remounts.
+`-m` mounts and enables auto-mount.
 
-`-f` looks up the volume type of device and runs the appropriate form of `fsck`. This may be appropriate to check / repair volume integrity after making a copy or zapping.
+`-f` looks up the volume type of device and runs the appropriate form of `fsck`. 
 
-`-u, -m` include updating `/etc/fstab` (using `vifs(8)` on macOS). On Linux fstab changes are observed by `udev` and may cause automatic mount / umount events.
+`-u, -m` control auto-mount by editing `/etc/fstab` (using `vifs(8)` on macOS). On Linux `/etc/fstab` changes are observed by `systemd` and `udev` and may cause automatic mount / umount events.
 
 > [!NOTE]
-> With `-m`, you can supply a volume UUID as `<device>`to remove an entry from `/etc/fstab` (no attempt to mount is made). Or, you can edit `/etc/fstab` by hand (on macOS use `vifs(8)`.)
->
-> If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted using this script, but this is the common case.
+> If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted using this script, but such volumes are the common case.
 >
 > UNMOUNT ignores the GPT EFI Service Partition as it is not mounted by default.
+>
+> With `-m`, you can supply a volume UUID as `<device>`to remove an entry from `/etc/fstab` (no attempt to mount is made). Or, you can edit `/etc/fstab` by hand (on macOS use `vifs(8)`.)
+>
+> Linux remounts via `systemd`/`udev` may be lazy, completimg when the
+mountpoint is next accessed.
 >
 > If you need a general purpose mount inhibitor for macOS which works for all devices, including disk images, see [Disk Arbitrator](https://github.com/aburgh/Disk-Arbitrator/).
 > Note: Disk Arbitrator hasn't been updated since 2017. On macOS Ventura it works to properly inhibit auto-mounts, but a UI bug prevents its Quit from working, so you have to kill it by hand.
 >
-> On macOS, containers are observed.
+> On macOS, containers are observed and subpartitions are processed.
+
+> [!WARNING]
+> macOS APFS containers may present edge cases that are not properly handled by this script. Use extra care when processing such devices.
 
 ### 2. COPY / SCAN
 
@@ -208,9 +214,9 @@ ddrescue-helper.sh -f /dev/sdb
 ddrescue-helper.sh -m /dev/sdb
 
 # Remove orphaned volume reference from /etc/fstab
-ddrescue-helper.sh -m <UUID>
+ddrescue-helper.sh -m <volume-UUID>
 
-# ...Or edit /etc/fstab by hand (e.g., vifs)
+# ...Or edit /etc/fstab by hand (e.g., macOS vifs(8))
 ```
 
 ## DEPENDENCIES
@@ -229,23 +235,21 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 
 ## NOTES & WARNINGS
 
-> [!IMPORTANT]
+> [!NOTE]
 > The script was developed using old bash v3.2 to make it compatible with macOS. It should work with all newer bash.
 >
 > It's been tested on Mac OS 10.14 Mojave on macOS Ventura, Ubuntu 23.10 and Mint 21.2.
 
 > [!CAUTION]
-> This script helps you, it does not think for you. Consider every action you take with this helper.
+> This script helps you, it does not think for you. Consider every action you take with this helper. With power comes responsibility.
 >
-> Be careful about device specs: /dev associations can change with device addition and removal, or due to a reboot. DOUBLE CHECK THE TARGET FOR COPY and ZAP.
+> Be careful about device specs: /dev associations can change with device addition and removal (e.g., USB), or due to a reboot. DOUBLE CHECK COPY & ZAP DEVICE TARGETS FOR EVERY RUN.
 >
-> Working with a /dev implies access to critical format data structures.
+> COPYING a /dev to another /dev or an existing file is DESTRUCTIVE, overwriting the destination.
 >
-> COPYING a /dev to another /dev is DESTRUCTIVE, overwriting the destination.
+> Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. For example, copying /dev to /dev when device sizes don't match should be avoided, but can be made to work in some cases. Thoroughly consider what you are doing at a systems level.
 >
-> Copying /dev to /dev when device sizes don't match is inherently tricky. Device layout has important implications om further recovery and use. This topic is beyond the scope of this documentation. Thoroughly consider what you are doing at a systems level.
->
-> ZAP only operates on blocks marked as unreadable by GNU `ddescue` domain map, and it read-tests blocks before attempting to overwrite, so it's safe. But a ZAP of /dev can set in motion other failure modes. Be ready to deal with the consequences.
+> ZAP only operates on blocks marked as unreadable by GNU `ddescue` domain map, and it read-tests blocks before attempting to overwrite, so it's safe. However, a ZAP of /dev can set in motion other failure modes, such as FSCK pruning orphan files. Prepare to deal with the consequences.
 >
 > ZAP of a file only affects the data for that file, so this is relatively safe.
 >

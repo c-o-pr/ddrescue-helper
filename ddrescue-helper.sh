@@ -1,5 +1,4 @@
 #!/bin/bash
-#
 # ddrexcue-helper.sh
 # Wire Moore 2024
 # https://github.com/c-o-pr/ddrescue-helper
@@ -35,7 +34,7 @@ $(basename "$0"): Usage:
 
   <device> is a /dev entry for an block storage device. For MOUNT, UNMOUNT or
   FSCK, if <device> is a whole drive, all its partitions are affected. MOUNT and
-  UNMOUNT ignore the EFI Service Parition (first partition of GPT dformat rive).
+  UNMOUNT ignore the EFI Service Partition (first partition of GPT format rive).
 
   <source> <destination> /dev block storage devices or plain files.
 
@@ -50,35 +49,30 @@ help() {
   cat << "EOF"
 DESCRIPTION
 
-  COPY (-c) OVERWRITES <destination> using <source>.
+  COPY (-c) OVERWRITES <destination> from <source> producing a domain map and
+  read-rate log (metadata) for use with REPORT and ZAP.
 
-  If <source> and <destinatio> are /dev entries for block storage devices
+  COPY / SCAN metadata is placed in a sub-directory path named by <label>.
+
+  COPY / SCAN resumes when an existing domain map found for the combination of
+  <label>, <source>, <destination> and GNU ddrescue has not previously recorded
+  the disposition of every block of the source ("Finished"). Remove the existing
+  metadata directory or chose another <label> to start over from beginning of
+  the source.
+
+  If <source> and <destination> are /dev entries for block storage devices
   <destination> becomes a clone of <source>.
 
-  Use /dev/null for <destination> to SCAN <source> producing a domain map
-  and read-rate log without making a COPY.
+    NOTE: On macOS, use the "rdisk" form of the /dev for best performance
+    (e.g., /dev/rdisk7).
 
-  If <source> is a /dev and <destinatio> is a plain file, destination becomes
+  If <source> is a /dev and <destination> is a plain file, destination becomes
   an image of the device.
 
-  If <source> and <destinatio> are plan files, a file copy is made.
+  If <source> and <destination> are plain files, a file copy is made.
 
-  On macOS, use the "rdisk" form of the /dev to get fastest drive access (e.g.,
-  /dev/rdisk7).
-
-  COPY (-c) metadata is placed in a sub-directory named <label> created in the
-  current working directory. Any existing MAP metadata for <label> is
-  sanity-checked against the specfied <source> and <destinatio>.
-
-  COPY RESUMES when existing domain map data is found for the combination of
-  <label>, <source>, <destination> and ddrescue has not previously marked the
-  disposition of every block of the source ("Finished"). Remove (or move) the
-  metadata directory to give up on an in-progress copy and start over from
-  begining of the source.
-
-  The COPY <destination> can be /dev/null which creates the effect of a SCAN
-  for read errors on <source>, and produces the MAP data in <label> for use with
-  REPORT and ZAP.
+  Use /dev/null for <destination> to SCAN <source> creating metadata without
+  making an actual copy.
 
   COPY implies UNMOUNT of <source> and <destination>. MOUNT after COPY must be
   performed explicitly.
@@ -89,24 +83,21 @@ DESCRIPTION
   -X is passed to GNU ddrescue to enables SCAN "scrape." See the GNU ddrescue
   documentation. To save time for SCAN, scrape is disabled by default, avoiding
   waiting for additional reads in bad areas that aren't likely to change the
-  error afftected-files REPORT. SCAN without -X implies that some blocks are not
+  error affected-files REPORT. SCAN without -X implies that some blocks are not
   read, Which could cause REPORT (-p) to list files as being affected by errors
-  for blocks that are readble. For a drive that stores large media files (MB+)
+  for blocks that are readable. For a drive that stores large media files (MB+)
   unscraped areas are unlikely to be part of multiple files. Scrape is enabled
   by default for COPY.
 
   -M is passed to GNU ddrescue as the "retrim" option, which marks all failed
   blocks as untrimmed, causing them to be retried.
 
-  It's not un-common for a failing drive to disconnect during a COPY "scape"
-  pass. Run ddrescue-helper again with the same parameters to resume.
+  It's not un-common for a failing drive to disconnect during a COPY "scrape"
+  pass. Sometimes a device error will cause a system reset. Run
+  ddrescue-helper.sh again with the same parameters to resume.
 
-  The domain map metadata created by COPY for drives and partitions feeds
-  REPORT, PLOT and ZAP. It's unclear if bad block reallocations can be triggered
-  through file ZAP but it's allowed.
-
-  UNMOUNT (-u) prevents auto-moounting. This is critical to ensure the integrity
-  of COPY. If <device> is a drive, all its partitions are unmouonted (including
+  UNMOUNT (-u) prevents auto-mounting. This is critical to ensure the integrity
+  of COPY. If <device> is a drive, all its partitions are unmounted (including
   APFS containers on macOS). The GPT EFI partition is not included as it is not
   normally auto-mounted.
 
@@ -115,11 +106,12 @@ DESCRIPTION
   With MOUNT, <device> can be a UUID to be removed from /etc/fstab. In certain
   use cases, an /etc/fstab entry for a volume UUID can end up orphaned.
 
-  Note: Mount behavior under Linux systemd & udev has subtlties such as
-  on-demand moounts and esoteric paths for mountpoints, this can mostly be
-  left to itself.
+  NOTE: Mount behavior under Linux systemd & udev has subtleties such as
+  on-demand mounts and esoteric paths for mount-points, this can mostly be left
+  to itself. Linux remounts may be lazy, completimg when the mountpoint is next
+  accessed.
   
-  If you want to force Linux to mount to a specific mountpoint, use:
+  NOTE: If you want to force Linux to mount at a specific point, use:
 
     sudo mount -t <fs-type> -o uid=$USER,gid=$USER,force,rw <device> <directory>
 
@@ -141,8 +133,6 @@ DESCRIPTION
   map metadata for <label>. SLOW is less than 1 MB/s (this should be user
   selectable).
 
-  REPORT is meaningless for a file copy.
-
   PLOT (-q) produces a graph of read-rate performance from the ddrescue
   rate-log to a dumb terminal. This can provide a picture of overall drive
   health.
@@ -160,7 +150,7 @@ DESCRIPTION
   just another way of visualizing the ddrescue error map.
 
   -K Switch ZAP to 4096 byte block size. This is experimental for 4K Advanced
-  Format drives which may present as 512 sectors but internall manage as 4K.
+  Format drives which may present as 512 sectors but internal manage as 4K.
 
   ZAP uses dd(1). For old versions of dd(1) or systems which don't support the
   idirect and odirect flags, you may need to consider "raw" device access.
@@ -196,11 +186,11 @@ ABOUT DATA RECOVERY WITH THIS HELPER
   If you can't access a volume at all, bad blocks can be ZAPPED which may allow
   them to be read. This can return a drive with a small number of bad blocks to
   service. ZAP read tests blocks before writing them, so the risk of ZAPPING is
-  low because the target blocks are already unreadable. However, whem bad blocks
-  are made readble this can lead to subsequent events which are dangerous to
+  low because the target blocks are already unreadable. However, when bad blocks
+  are made readable this can lead to subsequent events which are dangerous to
   other data.
 
-  Note that the concerns for making a COPY are completely seperable from the
+  Note that the concerns for making a COPY are completely separable from the
   concerns of REPORTING of affected-files, FSCK and ZAPPING. You have to fit
   the puzzle-pieces together.
 
@@ -267,7 +257,7 @@ trap "_abort false" SIGINT SIGTERM
 
 _DEBUG() {
   [ $TRACE ] || _color_fx_wrapper "$_cfx_debug" \
-    echo "DEBUG: ${FUNCNAME[1]}: $@" >&2
+    echo "DEBUG: ${FUNCNAME[1]}: $*" >&2
 }
 # These colors below to the xterm-256color termcap personality.
 # Colors chosen to work with dark and light themes.
@@ -277,10 +267,11 @@ _cfx_warn=214 # gold
 _cfx_advise=228 # yellow 51 # cyan
 _cfx_info=246 # grey
 _error() {
-  local caller=$( [ ${FUNCNAME[1]} != "main" ] && \
-                  echo "${FUNCNAME[1]}:" || \
-                  echo "" )
-  _color_fx_wrapper "$_cfx_error" echo '***' "$caller $@" >&2
+  local caller
+  caller=$( [ "${FUNCNAME[1]}" != "main" ] && \
+            echo "${FUNCNAME[1]}:" || \
+            echo "" )
+  _color_fx_wrapper "$_cfx_error" echo '***' "$caller $*" >&2
 }
 _warn() {
   _color_fx_wrapper "$_cfx_warn" "${@}"
@@ -296,7 +287,7 @@ _info() {
 # tput is available and output is a terminal
 #
 if which tput > /dev/null && \
-   [ -t 1 -a -t 2 ] && [ "$TERM" == "xterm-256color" ]; then
+   [ -t 1 ] && [ -t 2 ] && [ "$TERM" == "xterm-256color" ]; then
   _color_fx_wrapper() {
     # Pass in echo or printf with params.
     # Bash goofiness to preserve input param grouping
@@ -345,13 +336,13 @@ absolute_path() {
   # Run in a subshell to prevent hosing the current working dir.
   # XXX This breaks if current user cannot cd into parent of CWD.
   (
-    if [ -z $1 ]; then return 1; fi
+    if [ -z "$1" ]; then return 1; fi
     if ! cd "$(dirname "$1")"; then return 1; fi
-    case "$(basename $1)" in
+    case "$(basename "$1")" in
       ..)
-        echo "$(dirname $(pwd))";;
+        dirname "$(pwd)" ;;
       .)
-        echo "$(pwd)";;
+        pwd ;;
       *)
         # Strip extra leading /
         echo "$(pwd)/$(basename "$1")" | tr -s /
@@ -511,8 +502,9 @@ zap_sequence() {
   local count="$3"
   local K4="${4:-false}"
 
-  local result t
-  local direct_option="$(dd_supports_direct_io "$target")"
+  local result t direct_option
+
+  direct_option="$(dd_supports_direct_io "$target")"
 
   _info printf \
     "zap_sequence: Processing $target %d (0x%X) %d:\n" \
@@ -600,7 +592,7 @@ zap_sequence() {
 
   _info echo "zap_sequence: done, $range blocks"
   # Side effect, return actual number of blocks processed
-  return $range
+  return "$range"
 }
 
 zap_from_mapfile() {
@@ -655,12 +647,12 @@ zap_from_mapfile() {
     local total_blocks=0
     local address_error=false
     local format_error=false
-    while read block count; do
-      if [ -z $block ] || [ -z $count ]; then
+    while read -r block count; do
+      if [[ -z "$block" || -z "$count" ]]; then
         _error "block list format error"
         format_error=true
       fi
-      if [ $count -eq 0 ]; then
+      if [[ $count -eq 0 ]]; then
         _error "zero length extent"
         format_error=true
       fi
@@ -669,7 +661,7 @@ zap_from_mapfile() {
         _warn "bad block(s) in partition table or volume header"
 #        address_error=true
       fi
-      if [ $count -gt "$_max_extent" ]; then
+      if [[ $count -gt $_max_extent ]]; then
         _warn echo "*** zap_from_mapfile: Extent > $_max_extent blocks"
       fi
       let total_blocks+=$count
@@ -677,7 +669,7 @@ zap_from_mapfile() {
     if $format_error; then
       return 1
     fi
-    if [ "$total_blocks" -gt "$_max_blocks" ]; then
+    if [[ $total_blocks -gt $_max_blocks ]]; then
       _error "Total blocks $total_blocks > max allowed ($_max_blocks)"
       return 1
     fi
@@ -685,16 +677,16 @@ zap_from_mapfile() {
       return 1
     fi
   }
-  if [ $? -ne 0 ]; then return 1; fi
+  if [[ $? -ne 0 ]]; then return 1; fi
 
   # Do zap
   if $preview; then
     _info echo "zap_from_mapfile: ZAP PREVIEW: $Device"
-    printf "%12s %4s %11s %5s\n" "Block" "Count" "(hex)"
+    printf "%12s %4s %11s\n" "Block" "Count" "(hex)"
     cat "$zap_blocklist" | \
     { \
       total_blocks=0
-      while read block count; do
+      while read -r block count; do
         printf "%12d %-4d %#12x %#5.3x\n" \
           "$block" "$count" "$block" "$count"
         let total_blocks+=$count
@@ -713,7 +705,7 @@ zap_from_mapfile() {
     cat "$zap_blocklist" | \
     { \
       total_blocks=0
-      while read block count; do
+      while read -r block count; do
         zap_sequence "$device" "$block" "$count" "$K4"
         let total_blocks+=$?
       done
@@ -758,7 +750,7 @@ smart_scan_drive() {
 
   # Zaps on the fly to get SMART test to move ahead
 
-  if [ -z $drive ]; then exit 1; fi
+  if [ -z "$drive" ]; then exit 1; fi
 
   start_smart_selftest "$drive"
 
@@ -782,7 +774,7 @@ smart_scan_drive() {
     # When no more errors are listed since last test, work is done
     # Otherwise restart the test
     #
-    if [ $fixed_count -eq $x ]; then finished=true; continue; fi
+    if [ "$fixed_count" -eq "$x" ]; then finished=true; continue; fi
 
     create_smartctl_error_blocklist "$drive" "$smart_blocklist"
 
@@ -846,7 +838,7 @@ sanity_check_block_range() {
     msdos) return 0 ;;
     ntfs) return 0 ;;
     *)
-      _info echo "unknown device type $device_type"
+      _info echo "unknown device format $device_format"
       return 1
       ;;
   esac
@@ -869,11 +861,11 @@ extents_to_list() {
   fi
   _DEBUG $partition_offset $device_blocksize $fs_blocksize
   local block count
-  while IFS=" " read block count; do
+  while IFS=" " read -r block count; do
     block=$(( (block - partition_offset) / (fs_blocksize / device_blocksize) ))
     _DEBUG $block
-    if [ -z $block ] || [ $block -eq 0 ] || \
-       [ -z $count ] || [ $count -eq 0 ]; then break; fi
+    if [[ -z "$block" || $block -eq 0 ]] || \
+       [[ -z "$count" || $count -eq 0 ]]; then break; fi
     for (( i = 0; i < count; i++ )); do
       echo $(( block + i ))
     done
@@ -903,7 +895,7 @@ ddrescue_map_extents_bytes_to_blocks() {
   local addr len
   if (( blocksize == 512 )); then
     # Simply divide to convert to blocks.
-    while read addr len x; do
+    while read -r addr len x; do
       addr=$(( addr / blocksize ))
       len=$(( (len + blocksize - 1) / blocksize ))
       echo $addr $len
@@ -918,13 +910,13 @@ ddrescue_map_extents_bytes_to_blocks() {
   # Read ahead 1 extent to permit detection of overlap by next extent. Must
   # calculate extents in bytes (or 512 blocks) then convert to 4096 blocks as
   # last step to properly account for overlap.
-  read addr len x
+  read -r addr len x
   prev_addr=$addr
   prev_len=$len
   next_addr=$((prev_addr + prev_len))
 #  echo NEXT $next_addr 1>&2
   remainder=false
-  while read addr len x; do
+  while read -r addr len x; do
     if (( addr > next_addr )); then
       # The current extent doesn't overlap the previous so output previous.
       a=$(( prev_addr / blocksize ))
@@ -1023,7 +1015,7 @@ create_ddrescue_error_blocklist() {
 
 parse_rate_log_for_fsck() {
   local rate_log="$1"
-  local slow_blocklist="$2" # Output file name
+  local slow_blocklist="$2" # Output file base name ("-EXTENTS")
   local slow_limit="$3" # Regions slower than this are selected
   local partition_offset="${4:-0}"
   local device_blocksize="${5:-512}"
@@ -1031,7 +1023,7 @@ parse_rate_log_for_fsck() {
 
   local n addr rate ave_rate bad_areas bad_size interval block count
   grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
-    while IFS=" " read n addr rate ave_rate bad_areas bad_size; do
+    while IFS=" " read -r n addr rate ave_rate bad_areas bad_size; do
       # Log entires are issued once per second. Compute a sparse list of extents
       # based on the rate for that second to cover the region with 10 samples at
       # evenly spaced intervals. Advanced Format drives are fundamentally 4096
@@ -1057,7 +1049,7 @@ parse_rate_log_for_fsck() {
 create_slow_blocklist() {
   local device="$1"
   local rate_log="$2"
-  local slow_blocklist="$3" # Output file name
+  local slow_blocklist="$3" # Output file base name
   local partition_offset="${4:-0}"
   local slow_limit="${5:-1000000}" # Regions slower than this are selected
 
@@ -1300,7 +1292,7 @@ get_device_from_ddrescue_map() {
   local x
   x=$(grep "Command line: ddrescue" "$map_file" | \
         sed -E 's/^.+ ([^ ]+) [^ ]+ [^ ]+$/\1/')
-  if [ -z $x ]; then
+  if [ -z "$x" ]; then
     _error "map device = \"\""
     exit 1
   fi
@@ -1405,7 +1397,7 @@ get_alias_target() {
             do shell script "echo " & myPOSIXPath
           end if
         end tell
-      end' "$(echo "$path")" 2> /dev/null )
+      end' "$path" 2> /dev/null )
       if [ ! -z "$target" ]; then echo "$target"; else return 1; fi
       ;;
     Linux)
@@ -1775,7 +1767,7 @@ device_is_boot_drive() {
 #      x=$( diskutil list /dev/disk1 | \
 #             grep "Physical Store" | \
 #             sed -E 's/.+(disk[0-9]+).+$/\1/')
-#      if [ -z $x ]; then
+#      if [ -z "$x" ]; then
 #        if [[ $(strip_parition_id "$device" =~ "$x" ]]; then
 #           return 1
 #        fi
@@ -1906,10 +1898,10 @@ list_partitions() {
         p=( $(diskutil info "$device" | \
           grep "APFS Container:" | \
           sed -E 's/^.+(disk[0-9]+)$/\1/') )
-        _DEBUG "p=${p[@]}"
+        _DEBUG "p=${p[*]}"
 
         # No container, just a basic partition
-        if [ -z $p ]; then
+        if [ -z "$p" ]; then
           # Return supplied device minus "/dev/" to agree with
           # output of diskutil for other cases
           echo "${device#/dev/}"
@@ -1919,31 +1911,31 @@ list_partitions() {
           c=( $(diskutil list "$p" | \
             grep "Container disk" | \
             sed -E 's/^.+Container (disk[0-9]+).+$/\1/') )
-          _DEBUG "c=${c[@]}"
+          _DEBUG "c=${c[*]}"
           # continue on to process the container
         fi
 
       fi
 
-      _DEBUG "p=${p[@]}"
-      _DEBUG "c=${c[@]}"
+      _DEBUG "p=${p[*]}"
+      _DEBUG "c=${c[*]}"
 
       # For all containers, process their contents as volumes
       v=""
       if [ ! -z "$c" ]; then
-        for x in ${c[@]}; do
+        for x in "${c[@]}"; do
           # Contained volumes begin at continaer's partition index 1
-          v=( ${v[@]} $(diskutil list "$x" | \
+          v=( "${v[@]}" $(diskutil list "$x" | \
                   grep '^ *[1-9][0-9]*:' | \
                   sed -E 's/^.+(disk[0-9]+s[0-9]+)$/\1/') )
         done
-        _DEBUG "v=${v[@]}"
+        _DEBUG "v=${v[*]}"
       fi
 
-      if [ -z $p ] && [ -z $v ]; then
+      if [ -z "$p" ] && [ -z "$v" ]; then
         _info echo "$device has no eligible partitions" >&2
       else
-        echo ${p[@]} ${v[@]}
+        echo ${p[*]} ${v[*]}
       fi
 
       return 0
@@ -1971,12 +1963,11 @@ list_partitions() {
             grep -E -v "^[a-z]+1$" | \
             grep -E -o "^[a-z]+[0-9]+") )
         fi
-        if [ -z $p ]; then
+        if [ -z "$p" ]; then
           _info echo "$device has no eligible partitions" >&2
           return 1
         else
-          _DEBUG XXX ${p[@]}
-          echo ${p[@]}
+          echo ${p[*]}
         fi
       fi
       ;;
@@ -1994,7 +1985,7 @@ list_partitions() {
 os_mount() {
   local device="$1"
 
-  if [ -z $device ]; then return 1;  fi
+  if [ -z "$device" ]; then return 1;  fi
   case $(get_OS) in
     macOS)
       sudo diskutil mount "$device"
@@ -2024,7 +2015,7 @@ os_mount() {
 os_unmount() {
   local device="$1"
 
-  if [ -z $device ]; then return 1;  fi
+  if [ -z "$device" ]; then return 1;  fi
   case $(get_OS) in
     macOS)
       sudo diskutil unmount "$device"
@@ -2146,7 +2137,7 @@ unmount_device() {
   local p
   partitions=( $(list_partitions "$device") )
   if [ "${#partitions[@]}" -gt "1" ]; then
-    _info echo "unmount_device: ${partitions[@]}"
+    _info echo "unmount_device: ${partitions[*]}"
   fi
   for (( p=0; p<${#partitions[@]}; p++ )); do
     local part=/dev/"${partitions[$p]}"
@@ -2191,7 +2182,7 @@ mount_device() {
   local result=0
   _DEBUG "$device" "$(strip_partition_id "$device")"
   partitions=( $(list_partitions "$device") )
-  _info echo "mount_Device: ${partitions[@]}"
+  _info echo "mount_Device: ${partitions[*]}"
   local p
   for (( p=0; p<${#partitions[@]}; p++ )); do
     local part=/dev/"${partitions[$p]}"
@@ -2231,7 +2222,7 @@ fsck_device() {
   local partitions volume_uuid nr_checked fs_type
   local result=0
 
-  if $find_files && [ -z "$blocklist" -o ! -f "$blocklist" ]; then
+  if $find_files && [[ -z "$blocklist" || ! -f "$blocklist" ]]; then
     echo "fsck_device; missing block list for find files"
     return 1
   fi
@@ -2245,7 +2236,7 @@ fsck_device() {
       flush_io
       partitions=( $(list_partitions "$device" true) )
       _DEBUG "$device" "$(strip_partition_id "$device")"
-      _DEBUG ${partitions[@]}
+      _DEBUG "${partitions[*]}"
 
       local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
@@ -2288,7 +2279,7 @@ fsck_device() {
     Linux)
       partitions=( $(list_partitions "$device" true) )
       _DEBUG "$device" "$(strip_partition_id "$device")"
-      _DEBUG ${partitions[@]}
+      _DEBUG "${partitions[*]}"
 
       local p nr_checked=0
       for (( p=0; p<${#partitions[@]}; p++ )); do
@@ -2338,7 +2329,7 @@ fsck_device() {
             if $find_files; then
               local block count
               cat "${blocklist}-EXTENTS" | \
-                while read block count; do
+                while read -r block count; do
                   sudo ntfscluster -s ${block}-$((block+count)) "$part" | \
                     grep -F -v "inode found"
                 done
@@ -2497,7 +2488,7 @@ done
 shift $((OPTIND - 1))
 
 if ! $Do_Mount && ! $Do_Unmount && ! $Do_Fsck && \
-   ! $Do_Copy && ! $Do_Smart_Scan && \
+   ! $Do_Copy && \
    ! $Do_Error_Files_Report && ! $Do_Slow_Files_Report && \
    ! $Do_Zap_Blocks && \
    ! $Do_Rate_Plot && \
@@ -2668,13 +2659,13 @@ if $Do_Copy; then
   Map_File="$Label.map"
   Error_Fsck_Block_List="$Label.fsck-blocklist"
   Zap_Block_List="$Label.zap-blocklist"
-  Smart_Block_List="$Label.smart-blocklist"
+#  Smart_Block_List="$Label.smart-blocklist"
   Event_Log="$Label.event-log"
   Rate_Log="$Label.rate-log"
-  Files_Log="$Label.files-log"
+#  Files_Log="$Label.files-log"
   Metadata_Path=""
 
-  Copying=false
+#  Copying=false
   Resuming=false
 
   if [[ "$Label" =~ ^/dev ]]; then
@@ -2831,7 +2822,7 @@ if $Do_Copy; then
   fi
 
   # Unlikely edge case of hard links to same file
-  if [ -f "$Copy_Source" ] && [ -f "$Copy_SDest" ]; then
+  if [ -f "$Copy_Source" ] && [ -f "$Copy_Dest" ]; then
     if [ "$(get_inode "$Copy_Source")" == "$(get_inode "$Copy_Dest")" ]; then
       _error "copy: source & destination are same file (inode: $(get_inode "$Copy_Dest"))"
       exit 1
@@ -2865,7 +2856,7 @@ if $Do_Copy; then
     exit 1
   fi
 
-  Copying=true
+#  Copying=true
   if ! run_ddrescue \
          "$Copy_Source" \
          "$Copy_Dest" \
@@ -2928,8 +2919,6 @@ if \
   Error_Files_Report="$Label.FILES-REPORT-ERROR"
   Slow_Files_Report="$Label.FILES-REPORT-SLOW"
   Partition_Offset=0
-  Device_Blocksize=""
-  Fs_Blocksize=""
 
   if [[ "$Label" =~ ^/dev ]]; then
     _error "report/zap: Command line args reversed?"
@@ -2984,6 +2973,8 @@ if \
     fi
   fi
 
+echo $(absolute_path "..")
+
   # <device> is a partition, but map may be for a drive.
   #
   # Filesystem reports (fsck/debugfs/ntfscluster) expect block
@@ -3003,7 +2994,7 @@ if \
       # Correspondence to the map was checked coming in,
       # so assume the map is for a whole drive, compute offset.
       Partition_Offset=$(get_device_offset "$Device")
-      if [ -z $Partition_Offset ] || [ $Partition_Offset -eq 0 ]; then
+      if [ -z "$Partition_Offset" ] || [ $Partition_Offset -eq 0 ]; then
         _info echo "report: partition offset fail"
         return 1
       fi
@@ -3114,11 +3105,9 @@ if \
   Slow_Fsck_Block_List="$Label.blocklist-slow"
   Zap_Block_List="$Label.blocklist-zap"
   Rate_Log="$Label.rate-log" # Incremeted if exists
-  Rate_Plot_Data="$Label.rate-data"
+#  Rate_Plot_Data="$Label.rate-data"
   Rate_Plot_Report="$Label.REPORT-RATE-PLOT"
   Partition_Offset=0
-  Device_Blocksize=""
-  Fs_Blocksize=""
 
   if ! cd "$Label" > /dev/null 2>&1; then
     _error "rateplot: No metadata found ($Label)"
