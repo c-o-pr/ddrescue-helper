@@ -12,7 +12,7 @@ The script is controlled by command line options offering the following function
 
 `-u -m -f` UNMOUNT, MOUNT, and FSCK volumes on a partition or whole-drive basis. Unmount is persistent based on `/etc/fstab` entry for the volume UUID. This prevents disturbance of volume structures while recovery is in progress
 
-`-c` COPY (or SCAN) a drive, partition, or single file using GNU `ddescue`. This creates a domain map and read-rate log which are stored in the metadata directory named by a user-supplied `<label>`. 
+`-c` COPY (or SCAN) a drive, partition, or single file using GNU `ddescue`. This creates a domain map and read-rate log which are stored in the metadata directory named by a user-supplied `<label>`.
 
 Unmount is performed automatically for copy.\
 Mount and fsck must be performed explicitly.
@@ -50,7 +50,7 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 `-m` mounts and enables auto-mount.
 
-`-f` looks up the volume type of device and runs the appropriate form of `fsck`. 
+`-f` looks up the volume type of device and runs the appropriate form of `fsck`.
 
 `-u, -m` control auto-mount by editing `/etc/fstab` (using `vifs(8)` on macOS). On Linux `/etc/fstab` changes are observed by `systemd` and `udev` and may cause automatic mount / umount events.
 
@@ -189,7 +189,7 @@ ddrescue-helper.sh -p X /dev/sdb2
 # (XXX The rate should be an option.)
 ddrescue-helper.sh -s X /dev/src2
 
-# PLOT read-rate over time for the metadata in X. 
+# PLOT read-rate over time for the metadata in X.
 # No device needs to be specified. The rate-log in X is used.
 ddrescue-helper.sh -q X
 
@@ -198,7 +198,7 @@ ddrescue-helper.sh -q X
 # to be present.
 ddrescue-helper.sh -z X /dev/sdb
 
-ZAP blocks with read errors 
+ZAP blocks with read errors
 ddrescue-helper.sh -Z X /dev/sdb
 
 # ZAP 4096-byte blocks for Advanced Format drive (-K)
@@ -384,8 +384,8 @@ No "/dev", -s to set new random UUID.
 
 ## TODOS DOCUMENTATION
 
-- [ ] ADD Explain Linux vs macOS differences in ZAP, and implications of 
-read vs write failure. macOS appears to read / write some other area of the drive besides the requested blocks. Linux seems to work as expected. 
+- [ ] ADD Explain Linux vs macOS differences in ZAP, and implications of
+read vs write failure. macOS appears to read / write some other area of the drive besides the requested blocks. Linux seems to work as expected.
 - [ ] ADD Explain about ZAP extend and macOS likely requesting greater than 1 block for dd single block input.
 - [ ] ADD Explanations about how to read the map, the support metadata, and the thinking about blocklists, extents, and blocksize considerations.
 - [ ] ADD Explanations about modern vs older versions of Linux.
@@ -408,7 +408,7 @@ interactions with systemd, etc.
 
 - [ ] XXX Do not purge caches by default for ZAP as these may assist recovery steps down range.
 - [ ] XXX Double check alignment of extents in ZAP.
-- [ ] ADD A set of pre-defined block contents to be used with ZAP instead 
+- [ ] ADD A set of pre-defined block contents to be used with ZAP instead
 of /dev/zero.
 - [ ] ADD ZAP part table area and recover partition table from backup for case of apparently unformatted drive.
 - [ ] ADD Other file system types alternate format recovery options.

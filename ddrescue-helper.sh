@@ -110,7 +110,7 @@ DESCRIPTION
   on-demand mounts and esoteric paths for mount-points, this can mostly be left
   to itself. Linux remounts may be lazy, completimg when the mountpoint is next
   accessed.
-  
+
   NOTE: If you want to force Linux to mount at a specific point, use:
 
     sudo mount -t <fs-type> -o uid=$USER,gid=$USER,force,rw <device> <directory>
@@ -179,7 +179,7 @@ ABOUT DATA RECOVERY WITH THIS HELPER
   Affected files can be restored from backup or rescued individually using this
   helper. Or set affected files aside to prevent reuse of those areas of the
   drive.
-  
+
   (On Linux, see the badblocks(8) utility and its integration with ext2/3/4
   fsck.)
 
