@@ -269,9 +269,9 @@ _cfx_info=246 # grey
 _error() {
   local caller
   caller=$( [ "${FUNCNAME[1]}" != "main" ] && \
-            echo "${FUNCNAME[1]}:" || \
+            echo "${FUNCNAME[1]}: " || \
             echo "" )
-  _color_fx_wrapper "$_cfx_error" echo '***' "$caller $*" >&2
+  _color_fx_wrapper "$_cfx_error" echo '***' "${caller}$*" >&2
 }
 _warn() {
   _color_fx_wrapper "$_cfx_warn" "${@}"
@@ -337,7 +337,7 @@ absolute_path() {
   # XXX This breaks if current user cannot cd into parent of CWD.
   (
     if [ -z "$1" ]; then return 1; fi
-    if ! cd "$(dirname "$1")"; then return 1; fi
+    if ! cd "$(dirname "$1")" 2> /dev/null; then return 1; fi
     case "$(basename "$1")" in
       ..)
         dirname "$(pwd)" ;;
@@ -615,9 +615,9 @@ zap_from_mapfile() {
   _info echo "zap_from_mapfile: blocksize: $blocksize"
   if ! $preview; then
     if dd_supports_direct_io "$device"; then
-      _info echo "USING DIRECT I/O: true"
+      _info echo "zap_from_mapfile: USING DIRECT I/O: true"
     else
-      _info echo "USING DIRECT I/O: false"
+      _info echo "zap_from_mapfile: USING DIRECT I/O: false"
     fi
   fi
 
@@ -625,13 +625,15 @@ zap_from_mapfile() {
   extract_error_extents_from_map_file "$map_file" | \
    ddrescue_map_extents_bytes_to_blocks "$blocksize" | \
    sort -n >| "$zap_blocklist"
-
+  
   if [ ! -s "$zap_blocklist" ]; then
-    _info echo "Missing or empty bad-block list"
+    echo "zap_from_mapfile: No bad-blocks, nothing to zap"
     return 1
   fi
+
+#  echo ABC >| "$zap_blocklist"
   if grep '[^0-9 ]' "$zap_blocklist"; then
-    _info echo "Bad-block list should be a list of numbers"
+    _error "Bad-block list format error; should be a list of numbers"
     return 1
   fi
 
@@ -658,11 +660,11 @@ zap_from_mapfile() {
       fi
       if ! sanity_check_block_range \
               "$device_format" "$block" "$count" "$K4"; then
-        _warn "bad block(s) in partition table or volume header"
+        _warn echo "zap_from_mapfile: bad block(s) in partition table or volume header"
 #        address_error=true
       fi
       if [[ $count -gt $_max_extent ]]; then
-        _warn echo "*** zap_from_mapfile: Extent > $_max_extent blocks"
+        _warn echo "zap_from_mapfile: *** zap_from_mapfile: Extent > $_max_extent blocks"
       fi
       let total_blocks+=$count
     done
@@ -1111,19 +1113,19 @@ make_ddrescue_shim() {
 #!/bin/bash
 _cleanup() {
   if [ ! -z "$user" ] && [ "$user" != root ]; then
-    echo "$(basename "$0"): Metadata: setting ownership to $user"
+    echo "$(basename "$0"): setting metadata ownership to $user"
     if [ -f "$map_file" ]; then
-      chown "$user" "$map_file" "${map_file}.bak"
+      chown -f "$user" "$map_file" "${map_file}.bak"
     fi
     if ls "${rate_log}-"* > /dev/null 2>&1; then
-      chown "$user" "${rate_log}-"*
+      chown -f "$user" "${rate_log}-"*
     fi
     if [ -f "$event_log" ]; then
-      chown "$user" "$event_log"
+      chown -f "$user" "$event_log"
     fi
     if [ -f "$dest" ]; then
-      echo "$(basename "$0"): $dest: setting ownership to $user"
-      chown "$user" "$dest"
+      echo "$(basename "$0"): setting $dest ownership to $user"
+      chown -f "$user" "$dest"
     fi
   fi
 }
@@ -1335,7 +1337,7 @@ flush_io() {
         sudo blockdev --flushbufs $device
          # Flush device onboard buffer, if supported by drive
         _info echo -n "flush drive, "
-        sudo hdparm -F $device
+        sudo hdparm -F $device 2> /dev/null
       fi
       _info echo "done"
       ;;
@@ -2497,6 +2499,21 @@ if ! $Do_Mount && ! $Do_Unmount && ! $Do_Fsck && \
   exit 0
 fi
 
+# GLOBALS
+# File names used to hold the ddrewscue map file and block lists for
+# print and zap.
+Map_File="domain-map"
+Error_Fsck_Block_List="blocklist-error"
+Slow_Fsck_Block_List="blocklist-slow"
+Zap_Block_List="blocklist-zap"
+Smart_Block_List="blocklist-smart"
+Event_Log="log-event"
+Rate_Log="log-rate" # Incremeted if exists
+#Files_Log="log-files"
+Error_Files_Report="REPORT-FILES-ERROR.txt"
+Slow_Files_Report="REPORT-FILES-SLOW.txt"
+Rate_Plot_Report="REPORT-RATE-PLOT.txt"
+
 # USAGE 1
 
 if $Do_Mount || $Do_Unmount || $Do_Fsck; then
@@ -2639,7 +2656,7 @@ if $Do_Copy; then
      ! ddrescue --help | grep -F -q -- "--log-rates" || \
      ! ddrescue --help | grep -F -q -- "--no-scrape" || \
      ! ddrescue --help | grep -F -q -- "--no-trim"; then
-    _error "ddrescue(1) version missing needed options"
+    _error "ddrescue(1) version missing needed options:"
     _error "  --log-events"
     _error "  --log-rates"
     _error "  --no-scrape"
@@ -2649,27 +2666,14 @@ if $Do_Copy; then
     exit 1
   fi
 
-  # GLOBALS
   Label="${1%/}" # Name for metadata folder including the ddrescue map.
   Copy_Source="$2"
   Copy_Dest="$3"
-
-  # File names used to hold the ddrewscue map file and block lists for
-  # print and zap.
-  Map_File="$Label.map"
-  Error_Fsck_Block_List="$Label.fsck-blocklist"
-  Zap_Block_List="$Label.zap-blocklist"
-#  Smart_Block_List="$Label.smart-blocklist"
-  Event_Log="$Label.event-log"
-  Rate_Log="$Label.rate-log"
-#  Files_Log="$Label.files-log"
   Metadata_Path=""
-
-#  Copying=false
   Resuming=false
 
   if [[ "$Label" =~ ^/dev ]]; then
-    _error "Command line args reversed?"
+    _error "copy: Command line args reversed?"
     exit 1
   fi
 
@@ -2688,10 +2692,11 @@ if $Do_Copy; then
     _error "copy: Invalid destinationpath $Copy_Dest"
     let result+=1
   fi
+  if [ $result -gt 0 ]; then exit 1; fi
+
   _info echo "copy: Metadata path $Metadata_Path"
   _info echo "copy: Source path $Copy_Source"
   _info echo "copy: Dest path $Copy_Dest"
-  if [ $result -gt 0 ]; then exit 1; fi
 
   if [ "$Copy_Source" == "$Copy_Dest" ] || \
      [ "$Copy_Source" == "$Metadata_Path" ] || \
@@ -2709,14 +2714,17 @@ if $Do_Copy; then
 
   # Map_File remains relative to the metadata directory, no harm no foul.
   # Source and destination paths are absolute to avoid hazards.
-  if ! mkdir -p "$Label"; then
-    _error "copy: Can't create a data dir for \"$Label\""
+  if ! mkdir -p "$Metadata_Path" 2> /dev/null || \
+     ! touch "$Metadata_Path"/X 2> /dev/null; then
+    _error "copy: Can't create or access metadata dir \"$Label\""
     exit 1
+  else
+    rm "$Metadata_Path"/X
   fi
 
   _DEBUG "copy: Matadata directory: ${Label}"
 
-  if ! cd "$Metadata_Path"; then echo "Setup error (cd $Label)"; exit 1; fi
+  if ! cd "$Metadata_Path"; then echo "Setup error, can't cd $Label"; exit 1; fi
 
   # Verify Copy_Source is eligible
   if is_device "$Copy_Source" false; then
@@ -2791,21 +2799,21 @@ if $Do_Copy; then
     if ! resource_matches_map "$Copy_Source" "$Map_File"; then
       # XXX Can't distingush between source and dest in the map.
       # XXX IF src /dst were reversed this would still pass.
-      _error "copy: Existing block map ($Label) but not for $Copy_Source"
+      _error "copy: Existing block map ($Label/$Map_File) but not for $Copy_Source"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
     if resource_matches_map "$Copy_Dest" "$Map_File"; then
       if [ "$Copy_Dest" != "/dev/null" ] && \
          [ ! -s "$Copy_Dest" ]; then
-        _error "copy: Existing block map ($Label) but missing destination file $Copy_Dest"
+        _error "copy: Existing block map ($Label/$Map_File) but missing destination file $Copy_Dest"
         exit 1
       fi
       # XXX Fair assumption
       # XXX Could compare the first N blocks of source / dest to verify
       Resuming=true
     else
-      _error "copy: Existing block map ($Label) not for this destination"
+      _error "copy: Existing block map ($Label/$Map_File) not for this destination"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
@@ -2856,7 +2864,6 @@ if $Do_Copy; then
     exit 1
   fi
 
-#  Copying=true
   if ! run_ddrescue \
          "$Copy_Source" \
          "$Copy_Dest" \
@@ -2901,23 +2908,13 @@ if \
   fi
 
   # GLOBALS
-  Label="${1%/}" # Name for metadata folder including the ddrescue map.
-  Device="$2"
+
+  # Name for metadata folder including the ddrescue map.
+  Label="${1%/}"
   # Device is required becuase a although a map contains a command-line record
   # of the output device, which could be extracted, the map can be for a whole
   # drive, while a report must be for a partition.
-
-  # File names used to hold the ddrewscue map file and block lists for
-  # print and zap.
-  Map_File="$Label.map"
-  Error_Fsck_Block_List="$Label.blocklist-error"
-  Slow_Fsck_Block_List="$Label.blocklist-slow"
-  Zap_Block_List="$Label.blocklist-zap"
-  Smart_Block_List="$Label.blocklist-smart"
-  Event_Log="$Label.event-log"
-  Rate_Log="$Label.rate-log" # Incremeted if exists
-  Error_Files_Report="$Label.FILES-REPORT-ERROR"
-  Slow_Files_Report="$Label.FILES-REPORT-SLOW"
+  Device="$2"
   Partition_Offset=0
 
   if [[ "$Label" =~ ^/dev ]]; then
@@ -2943,8 +2940,9 @@ if \
     _error "report/zap: No metadata found ($Label)"
     exit 1
   fi
+
   if [ ! -s "$Map_File" ]; then
-    _error "report/zap: No ddrescue block map ($Label). Create with -c"
+    _error "report/zap: No ddrescue map ($Label/$Map_File). Create with -c"
     exit 1
   fi
 
@@ -2961,13 +2959,13 @@ if \
       # Accept whole drive map for a partition device
       x="$(strip_partition_id "$Device")"
       if ! resource_matches_map "$x" "$Map_File"; then
-        _error "report: Existing block map ($Label) but not for $Device"
+        _error "report: Existing block map ($Label/$Map_File) but not for $Device"
         get_commandline_from_map "$Map_File"
         exit 1
       fi
       # Fall through
     else
-      _error "report: Existing block map ($Label) but not for $Device"
+      _error "report: Existing block map ($Label/$Map_File) but not for $Device"
       get_commandline_from_map "$Map_File"
       exit 1
     fi
@@ -3098,23 +3096,17 @@ if \
   # GLOBALS
   Label="${1%/}" # Name for metadata folder including the ddrescue map.
 
-  # File names used to hold the ddrewscue map file and block lists for
-  # print and zap.
-  Map_File="$Label.map"
-  Error_Fsck_Block_List="$Label.blocklist-error"
-  Slow_Fsck_Block_List="$Label.blocklist-slow"
-  Zap_Block_List="$Label.blocklist-zap"
-  Rate_Log="$Label.rate-log" # Incremeted if exists
-#  Rate_Plot_Data="$Label.rate-data"
-  Rate_Plot_Report="$Label.REPORT-RATE-PLOT"
-  Partition_Offset=0
+  if ! Metadata_Path=$(absolute_path "$Label"); then
+    _error "copy: Invalid label path $Label"
+    exit 1
+  fi
 
-  if ! cd "$Label" > /dev/null 2>&1; then
+  if ! cd "$Metadata_Path" > /dev/null 2>&1; then
     _error "rateplot: No metadata found ($Label)"
     exit 1
   fi
   if ! ls "${Rate_Log}-"* > /dev/null 2>&1; then
-    _error "rateplot: No ddrescue rate-log data ($Label)"
+    _error "rateplot: No ddrescue rate-log ($Label)"
     exit 1
   fi
 
@@ -3130,7 +3122,7 @@ if \
     gnuplot -e \
     "set terminal dumb; \
      unset grid; \
-     set xlabel \"Position GB\"; \
+     set xlabel \"Read Position GB\"; \
      set ylabel \"Rate\nMB/s\"; \
      plot \"-\" using 1:2 title \"$Label\" pt \"|\"" | \
     tee "$Rate_Plot_Report"

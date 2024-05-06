@@ -33,8 +33,8 @@ Options allow preview of the block addresses to be ZAPPED, and 4K blocks rather 
 GNU `ddescue` is a utility for copying drives, partitions, or files in a way that gracefully handles media read-errors, allowing as much data as possible to be recovered from the source. It's restartable and continues with previous progress until all device blocks are accounted for.
 
 A side effect of running GNU `ddescue` is the creation of two kinds of metadata for the copy source:
-1. A domain map of device extents with read-error.
-2. A read-rate log of read performance measured second-by-second.
+1. A domain map of device extents with read-errors.
+2. A read-rate log of performance measured second-by-second.
 
 `ddrescue-helper.sh` takes advantage of this metadata for its features.
 
@@ -52,9 +52,9 @@ There are THREE MODES of `ddrescue-helper.sh` operation:
 
 `-f` looks up the volume type of device and runs the appropriate form of `fsck`.
 
-`-u, -m` control auto-mount by editing `/etc/fstab` (using `vifs(8)` on macOS). On Linux `/etc/fstab` changes are observed by `systemd` and `udev` and may cause automatic mount / umount events.
-
 > [!NOTE]
+> `-u, -m` control auto-mount by editing `/etc/fstab` (using `vifs(8)` on macOS). On Linux `/etc/fstab` changes are observed by `systemd` and `udev` and may cause automatic mount / umount events.
+>
 > If `<device>` is a partition, only it is affected. If `<device>` is a drive, all partitions are affected. Only partitions with volume UUIDs can be persistently unmounted using this script, but such volumes are the common case.
 >
 > UNMOUNT ignores the GPT EFI Service Partition as it is not mounted by default.
@@ -74,13 +74,7 @@ mountpoint is next accessed.
 
 ### 2. COPY / SCAN
 
-Runs `ddrescue` to scan a device or recover data, generating a domain map of read-errors and a rate-log which records device regions that experienced read slowdown. The domain map and rate-log are stored in a folder named with <label>.
-
-`ddrescue_helper.sh -c [-X] <label> <source> /dev/null`
-
-- SCAN a drive, partition or file to create the domain map and rate-log. SCAN builds the domain map and rate-log without saving device data, so you can run REPORT, PLOT, and ZAP.
-
-`-X`: Enable GNU `ddescue` scraping during SCAN, scraping is disabled by default to save some time getting block list for use with REPORTS. For COPY, scraping is enabled by default to recover as much data as possible.
+Run GNU `ddrescue` to scan a device or recover data, generating a domain map of read-errors and a rate-log which records device regions that experienced read slowdown. The domain map and rate-log are stored in a directory named by`<label>`.
 
 `ddrescue_helper.sh -c [-M] <label> <deivce> <device>`
 
@@ -94,16 +88,22 @@ Runs `ddrescue` to scan a device or recover data, generating a domain map of rea
 
 - COPY a file to another file.
 
-COPY is destructive to data on `<destination>`.
+COPY is destructive to data at the destination.
 
-`-M` is passed to GNU `ddescue` as the "re-trim" option. This marks all failed blocks as untrimmed, causing them to be retried.
+`ddrescue_helper.sh -c [-X] <label> <source> /dev/null`
+
+- SCAN a drive, partition or file to create the domain map and rate-log. SCAN builds the domain map and rate-log without saving device data, so you can run REPORT, PLOT, and ZAP.
+
+`-M` is passed to GNU `ddescue` as the "re-trim" option. This marks all failed block reads as untrimmed, causing them to be retried.
+
+`-X`: Enable GNU `ddescue` scraping during SCAN, scraping is disabled by default to save some time creating the domain map for use with REPORT. For COPY, scraping is enabled by default to recover as much data as possible.
 
 > [!NOTE]
 > COPY/SCAN be stopped with ^C, then resumed by re-running the helper command.
 >
-> About "scraping": By default. GNU `ddescue` uses large reads to speed copy progress. When it gets a read-error it marks a large area as an error and continues to to copy further data as fast as possible. A subsequent read pass "trims" the large read area from its leading and trailing edges down to the an extent bounded by unreadable blocks. In a third "scrape" pass, each block in the trimmed extent is read to collect as much data as possible. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and maybe not worth the time because affected files can be large relative to the trimmed extent (REPORT) and ZAP will read test each block in any extent. See the GNU `ddescue` manual.
+> About "scraping": By default. GNU `ddescue` uses large reads to speed copy progress. When it encounters a read-error, it marks a large area as untried and continues to copy further data as fast as possible. A subsequent read pass "trims" the large untried area from its leading and trailing edges down to the an extent bounded by unreadable blocks. In a third "scrape" pass, each block in the trimmed extent is read to collect as much data as possible. If there are localized series of bad blocks, which is the typical case, scraping during SCAN can be time consuming and maybe not worth the time because affected files can be large relative to the trimmed extent, but not affect REPORT. And ZAP will read-test each block in any error extent. See the GNU `ddescue` manual for more information aon trimming and scraping.
 > [!TIP]
-> `ddrescue_helper.sh` checks that any existing domain map for `<label>` matches the targets specified on the command line. If a /dev association changes between runs, you can edit the domain map file by hand to update the device specs.
+> `ddrescue_helper.sh` checks that the command line recorded within any existing domain map (`<label>/<label>.map`) matches the targets specified on the current command line. If a /dev association changes between runs, you can edit the domain map file by hand to update the /dev specs.
 
 ### 3 REPORT affected files, PLOT performance and ZAP blocks
 
