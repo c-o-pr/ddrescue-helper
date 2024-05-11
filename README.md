@@ -109,11 +109,13 @@ COPY is destructive to data at the destination.
 
 These operations utilize the GNU `ddescue` domain-map metadata produced by COPY / SCAN.
 
-`ddrescue_helper.sh -p | -s <label> <device>`
+`ddrescue_helper.sh -p | -s [-R <rate>] <label> <device>`
 
 `-p` REPORT files affected by read-errors.
 
 `-s` REPORT files affected by slow reads, where slow is a 1 second or longer dureation read-rate of less than 1 MB/s.
+
+`-R <rate>` Set read rate in bytes per second when determining files affected by slow reads. SI prefixes are accepted. The rate must be an integer and not equal to 0.
 
 `ddrescue_helper.sh -q <label>`
 
@@ -184,10 +186,9 @@ more X/X.map
 #  the block offsets for the partition are automatically calculated.
 ddrescue-helper.sh -p X /dev/sdb2
 
-# REPORT which files are affected by slow reads, less that 1 MB/s.
-# 1 MB/s is an arbitrary rate hard-coded into the script.
-# (XXX The rate should be an option.)
-ddrescue-helper.sh -s X /dev/sdb2
+# REPORT which files are affected by slow reads, less that 100KB/s.
+# Default is 1MB.
+ddrescue-helper.sh -s -R 100K X /dev/sdb2
 
 # PLOT read-rate over time for the metadata in X.
 # No device needs to be specified. The rate-log in X is used.

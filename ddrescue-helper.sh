@@ -131,18 +131,22 @@ DESCRIPTION
     macOS: FAT, ExFAT, HFS+, APFS
     Limux: ext2/3/4, FAT, ExFAT, NTFS, HFS+
 
-  REPORT (-p, -s) lists files affected by errors or slow reads recorded in the
-  map metadata for <label>. SLOW is less than 1 MB/s (this should be user
-  selectable).
+  REPORT (-p, -s) lists files affected by read errors (-p) or slow reads (-s)
+  recorded in the map metadata for <label>. Slow is less than 100 KB/s
+  (default).
 
-  PLOT (-q) produces a graph of read-rate performance from the ddrescue
-  rate-log to a dumb terminal. This can provide a picture of overall drive
-  health.
+  -R <rate>, for REPORT SLOW (-s), set read rate in bytes per second when
+  determining files affected by slow reads. SI prefixes are accepted. The rate
+  must be an integer and not equal to 0.
 
   For REPORT, <device> must be a partition (e.g. /dev/rdisk2s2) with a supported
   filesystem. MAP metadata can be either for the partition (e.g., /dev/rdisk7s2)
   or for the whole drive (e.g. /dev/rdisk7). The necessary block address offsets
   for proper location of files will be automatically calculated.
+
+  PLOT (-q) produces a graph of read-rate performance from the ddrescue
+  rate-log to a dumb terminal. This can provide a picture of overall drive
+  health.
 
   ZAP (-Z) blocks listed as errors in an existing block map. This uses dd to
   write specific discrete blocks in an attempt to make the drive re-allocate
@@ -151,8 +155,8 @@ DESCRIPTION
   ZAP PREVIEW (-z) of lets you see what ZAP will touch without zapping. It's
   just another way of visualizing the ddrescue error map.
 
-  -K Switch ZAP to 4096 byte block size. This is experimental for 4K Advanced
-  Format drives which may present as 512 sectors but internal manage as 4K.
+  -K ZAP with 4096 byte block size. This is for use with 4K Advanced Format 
+  drives which present as 512 byte sectors but record in 4096 byte sectors.
 
   ZAP uses dd(1). For old versions of dd(1) or systems which don't support the
   idirect and odirect flags, you may need to consider "raw" device access.
@@ -1112,7 +1116,7 @@ create_slow_blocklist() {
   local rate_log="$2"
   local slow_blocklist="$3" # Output file base name
   local partition_offset="${4:-0}"
-  local slow_limit="${5:-1000000}" # Rates slower than this are selected
+  local slow_limit="${5:-100000}" # Rates slower than this are selected
 
   _info echo "SLOW BLOCKLIST (less than $slow_limit bytes per sec)"
   if ! parse_rate_log_for_fsck \
@@ -3144,6 +3148,8 @@ if \
       if [ "$Opt_Slow_Rate" == -1 ]; then
         Opt_Slow_Rate=$Opt_Slow_Rate_Default
       fi
+
+#      _info echo "SLOW READ RATE: $Opt_Slow_Rate"
 
       # Remove existing slow block lists if any
       rm "$Slow_Fsck_Block_List"
