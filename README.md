@@ -187,7 +187,7 @@ ddrescue-helper.sh -p X /dev/sdb2
 # REPORT which files are affected by slow reads, less that 1 MB/s.
 # 1 MB/s is an arbitrary rate hard-coded into the script.
 # (XXX The rate should be an option.)
-ddrescue-helper.sh -s X /dev/src2
+ddrescue-helper.sh -s X /dev/sdb2
 
 # PLOT read-rate over time for the metadata in X.
 # No device needs to be specified. The rate-log in X is used.
@@ -259,13 +259,13 @@ Key Linux system dependencies are `udev` and `systemd` to handle device mounts. 
 
 ## IS CONTINUING TO USE A DRIVE WITH MEDIA ERRORS SANE?
 
-My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. For example, one way to work around bad spots is to set-aside files that cover them. Another is to ZAP.
+My experience is that commodities spinning hard drives (especially large cheap drives) have unreliable areas that only get exposed when the drive is used very close to full for a long time. I will make a wild guess that the drive makers solve a binning problem by tolerating a spread of defects in shipped product and deferring the exposure of these defects for as long as possible. The gambit is that customers won't become aware of the problem areas until the drive is well out of warranty and so old that accountability for failure is irrelevant. The implication of this wild assessment is that a well-used drive can be expected to suffer from some errors when heavily used, but still has life it in if you can find a way to deal with the problem areas. 
 
 By running a scan over an entire drive, such defects can be side-stepped by setting aside affected files or ZAPPING block make the area readable. This may allow continued use of a drive with minor errors.
 
 The wise have backups and simply replace a problem drive.
 
-The frugal or bereft may want to work with janky devices at hand.
+The frugal or bereft may want to work with a janky device at hand.
 
 Making a terrible mistake is possible, but the skilled may be rewarded.
 
@@ -273,30 +273,36 @@ Making a terrible mistake is possible, but the skilled may be rewarded.
 
 The idea for this helper came about from dealing with read-errors occurring during local backups of spinning drives. As mentioned above, I have found that as spinning drives fill and age, they become prone to small bad regions.
 
-I keep backups, and I prefer to replace a drive with any errors. But for reasons stinginess, I wanted to keep using some drive affected by small number of bad blocks for as long as possible. One way I found to do this is to set aside files with read errors so the bad region doesn't get re-used and recover the affected file from a backup.
-
-Eventually I ran into a case where filesystem metadata was affected and a drive
-became unmountable. To recover from this, I started by looking at SMART
-self-test logs to report bad blocks. SMART self-tests can run in the
-background while the drive is in use and the log can be queried on a live drive.
-This seemed promising, but due to vendor inconsistencies with SMART, and that
-many of my data drives are attached by USB, which prevents access to SMART
-capabilities, I couldn't figure out how to build a helper based on SMART.
+I keep backups, and I prefer to replace a drive with any errors. But for reasons
+of stinginess, I wanted to keep using a drive affected by small number of bad
+blocks for as long as possible. One way I found to do this is to set aside files
+with read errors so the bad region doesn't get re-used and recover the affected
+file from a backup. But eventually I ran into a case where filesystem metadata
+was affected and a drive became unmountable. To recover from this, I started by
+looking at SMART self-test logs to report bad blocks. SMART self-tests can run
+in the background while the drive is in use and the log can be queried on a live
+drive. This seemed promising! But due to vendor inconsistencies with SMART, and
+the fact that many of my data drives are attached by USB which prevents access
+to SMART capabilities, I couldn't figure out how to build a helper based on
+SMART.
 
 [As an interesting aside, I discovered that when a USB drive is passed through to an Ubuntu VM via Parallels virtual machine, `smartctl(8)` works as if the drive were locally attached by SATA, so I wonder what keeps SMART from working with native USB drives?]
 
-Linux has `badblocks(8)` to scan for bad blocks. `badblocks` has nice integration with ext2/3/4 filesystem, where bad-block list can be ingested by `fsck` to prevent those blocks from being allocated by the filesystem. Linux also has `hdparm(8)`, which can write single blocks to try to force them to become readable.
+Linux has `badblocks(8)` to scan for bad blocks. `badblocks` has nice
+integration with ext2/3/4 filesystem, where bad-block list can be ingested by
+`fsck` to update filesystem metadata to prevent those blocks from being
+allocated. Linux also has `hdparm(8)`, which can write single blocks to try to
+force them to become readable. But my primary system is a hackintosh and my data
+is on Apple HFS+. `badblocks` and `hdparm` are not available on macOS, even via
+3rd-party ports.
 
-But my primary system is a hackintosh and my data is on Apple HFS+. `badblocks`
-and `hdparm` are not available on macOS, even via 3rd-party ports.
-
-Another option is `dd(1)`. This old-school utility is available on every Unix variant and can write single blocks. Using it I found I could write a disk block with a read error and read it back (this is not just a matter of caching, although from a certain point of view it may not matter). This allowed me to regain access to an unmountable drive and recover needed contents without making a full drive copy.
+Another option is `dd(1)`. This old-school utility is available on every Unix variant and can write single blocks. I found I could write a disk block with a read error and read it back (this is not just a matter of caching, although from a certain point of view it may not matter). This allowed me to regain access to an unmountable drive and recover needed contents without making a full drive copy.
 
 Entrée GNU `ddrescue`. This is an indispensable tool for recovering data from failing drives. As it works, it creates a domain map of unreadable extents pared down to specific bad blocks. Compared to SMART, it's far simpler and more consistent to use, it's drive hardware agnostic, and you can control scope from recovery of a whole drive, a partition, or a file, then parse the domain map into a bad block list for use with `dd`. This gave rise to ZAP capability.
 
 When making a partition or full drive copy, it's very important that the source and destination filesystem metadata remains in a consistent state until the copy is complete. Not only must the devices be unmounted, but copying may be interrupted by a timeout, spontaneous drive disconnection, a system crash, or you way want to intentionally stop a copy. This necessitates a prohibition on auto-mount so that copying may be resumed. Before re-mounting a volume, it's wise to check it for consistency. This gave rise to UNMOUNT, MOUNT and FSCK.
 
-While working with a problem HFS+ drive, I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to. It turns out that tools exist to do this for NTFS and ext2/3/4. GNU `ddescue` can also generate a rate-log, which, similar to the domain map, can be converted into a block list and fed to filesystem tools to find files affected by drive regions with slow reads. This gave rise to the REPORT capability.
+While working with a problem HFS+ drive, I came across the -B option for `fsck.hfs(8)`, which accepts a list of block addresses and reports which files the blocks belong to. It turns out that tools exist to do this for NTFS and ext2/3/4. GNU `ddescue` can also generate a rate-log, which, similar to the domain map, can be converted into a block list and fed to filesystem tools to find files affected by drive regions with slow reads. These gave rise to the REPORT capability.
 
 PLOT is merely a parsing of the GNU `ddescue` rate-log into a bar-graph formatted for a dumb terminal using gnuplot.
 
@@ -321,10 +327,11 @@ A growing list of fixes and improvements are under consideration.
 - [ ] ADD Input a list of files to copy (source) and a tree of metadata.
 - [ ] ADD pass additional options to ddrescue.
 - [ ] ADD Option to ZAP even if READ test succeeds.
+- [ ] ADD ZAP add writes to blocks with very slow read tests
+- [x] ADD Option to set read rate for report files affected by slow reads.
 - [x] XXX Test zap of a file (works).
 - [x] ADD 4K block size option to ddrescue for 4K Advanced Format Drives.
 - [x] ADD System detection of ddrescue version or options: ADDED check for direct I/O capability but not a comprehensive version review.
-- [x] ADD ZAP slow reads.
 - [x] XXX Normalize get_fs_type.
 - [x] XXX The warning for ZAP overlapping format data structures needs to be device format aware-- drive versus volume.
 - [x] ADD Improve situational awareness of the EFI service partition re MBR
@@ -336,7 +343,7 @@ A growing list of fixes and improvements are under consideration.
 - [x] XXX Fix src/dst relative file path naming to be per CWD not the label folder.
 - [x] ADD Sanity checks for src/dst aliases and symlinks.
 - [x] ADD Check for source file is newer than dest file.
-- [x] ADD Check for <file> to <file> if destination is directory.
+- [x] ADD Check for <file> to <file> conflicts.
 - [x] XXX identical source / dest check needs to consider different paths to same resource.
 - [x] XXX -s Slow reads extent spread for coverage vs block quantity.
 - [x] XXX -p -s Adjust partition offset based on device specified.

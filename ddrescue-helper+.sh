@@ -880,7 +880,7 @@ extract_error_extents_from_map_file() {
   grep -e - -e / -e '*'
 }
 
-extents_to_blocklist() {
+extents_to_list() {
   local partition_offset="$1"
   local device_blocksize="$2"
   local fs_blocksize="$3"
@@ -894,14 +894,8 @@ extents_to_blocklist() {
   while IFS=" " read -r block count; do
     block=$(( (block - partition_offset) / (fs_blocksize / device_blocksize) ))
     _DEBUG $block
-    # XXX Rate-log processing will generate lists that begin at address 0,
-    # XXX so skip. This edge check might not below here.
     if [[ -z "$block" || $block -eq 0 ]] || \
-       [[ -z "$count" || $count -eq 0 ]]; then continue; fi
-    if [[ $block -lt 0 ]]; then
-      _error "negative block value, wrong partition offset?"
-      return 1
-    fi
+       [[ -z "$count" || $count -eq 0 ]]; then break; fi
     for (( i = 0; i < count; i++ )); do
       echo $(( block + i ))
     done
@@ -1009,7 +1003,7 @@ parse_ddrescue_map_for_fsck() {
     ddrescue_map_extents_bytes_to_blocks $device_blocksize | \
     tee "${fsck_blocklist}-EXTENTS" | \
     sort -n | \
-    extents_to_blocklist "$partition_offset" "$device_blocksize" "$fs_blocksize"
+    extents_to_list "$partition_offset" "$device_blocksize" "$fs_blocksize"
 }
 
 create_ddrescue_error_blocklist() {
@@ -1051,60 +1045,37 @@ create_ddrescue_error_blocklist() {
 
 parse_rate_log_for_fsck() {
   local rate_log="$1"
-  local slow_blocklist_name="$2" # Output file base name ("-EXTENTS")
+  local slow_blocklist="$2" # Output file base name ("-EXTENTS")
   local slow_limit="$3" # Regions slower than this are selected
   local partition_offset="${4:-0}"
   local device_blocksize="${5:-512}"
   local fs_blocksize="${6:-4096}" # For ext2/3/4 reports, req debugfs
 
   local n addr rate ave_rate bad_areas bad_size interval block count
-  local samples_per_log_entry=10 # Num blocks to sample in one rate-log entry
-  #
-  # Rate log is a list of numbered entries including a byte address and rate per
-  # second, e.g.:
-  # # Start time:   2024-03-10 18:30:59
-  # #Time  Ipos  Current_rate  Average_rate  Bad_areas  Bad_size
-  #  0  0x00000000         0         0        0         0
-  #  1  0x00C10000  12648448  12648448        0         0
-  #  2  0x02ED0000  36438016  24543232        0         0 
-  #
-  # Compute a sparse list of extents based on the rate for that second to cover
-  # the region with 50 samples at evenly spaced address intervals. Advanced
-  # Format drives are fundamentally 4096 byte format, so place samples on 4096
-  # byte boundaries to harmonize with subsequent input to ZAP.
-  #  
   grep -h -E "^ *[0-9]+  0x" "${rate_log}"-* | \
-    {
-      IFS=" " read -r n begin_addr rate ave_rate bad_areas bad_size
-#        echo $begin_addr $rate $ave_rate $bad_areas $bad_size >&2
-      while IFS=" " read -r n addr rate ave_rate bad_areas bad_size; do
-        # Rate entry for addr 0 is 0 so skip
-#        echo $addr $rate $ave_rate $bad_areas $bad_size $slow_limit >&2
-
-        if (( rate < slow_limit )); then
-          # addr is start address for a slow extent with length of rate bytes.
-          # Divide the slow extent into evenly spaced sample blocks on 4096-byte 
-          # boundaries.
-          interval=$(( rate / samples_per_log_entry ))
-#          echo INTERVAL $interval >&2
-          for (( i = 0; i <= samples_per_log_entry; i++ )); do
-            # Output sample
-            echo "$(( ((begin_addr + i * interval) / 4096) * 4096 ))" 0x200
-#            echo "$(( ((begin_addr + i * interval) / 4096) * 4096 ))" 0x200 >&2
-          done
-        fi
-        begin_addr=$addr
-      done
-    } | \
-    # The compendium of logs may duplicate slow regions so filter out dups
-    # EXTENTS just for debugging the calculation, extent range should always
-    # be 1.
+    while IFS=" " read -r n addr rate ave_rate bad_areas bad_size; do
+      # Log entires are issued once per second. Compute a sparse list of extents
+      # based on the rate for that second to cover the region with 10 samples at
+      # evenly spaced intervals. Advanced Format drives are fundamentally 4096
+      # byte formats, so place samples on 4096 byte intervals
+      # Interger div rounds down.
+      #
+      # Rate entry for addr 0 is 0 so skip
+      if (( $addr == 0 )); then continue; fi
+      if (( rate < "$slow_limit" )); then
+        interval=$(( rate / 50 / 4096 ))
+        for (( i=0; i<=interval; i++ )); do
+          echo $(( addr + ( i * interval * 4096 ) )) 0x200
+        done
+      fi
+    done | \
+    # The compendium of logs may duplicate slow regions so filter dups out
+    # EXTENTS just for debugging the calculation
     uniq | \
     sort -n | \
     ddrescue_map_extents_bytes_to_blocks $device_blocksize | \
-    tee "${slow_blocklist_name}-EXTENTS" | \
-    extents_to_blocklist "$partition_offset" "$device_blocksize" "$fs_blocksize"
-    return $?
+    tee "${slow_blocklist}-EXTENTS" | \
+    extents_to_list "$partition_offset" "$device_blocksize" "$fs_blocksize"
 }
 
 create_slow_blocklist() {
@@ -1115,21 +1086,18 @@ create_slow_blocklist() {
   local slow_limit="${5:-1000000}" # Rates slower than this are selected
 
   _info echo "SLOW BLOCKLIST (less than $slow_limit bytes per sec)"
-  if ! parse_rate_log_for_fsck \
+  parse_rate_log_for_fsck \
     "$rate_log" \
     "$slow_blocklist" \
     "$slow_limit" \
     "$partition_offset" \
     "$(get_device_blocksize "$device")" \
     "$(get_fs_blocksize_for_file_lookup "$device")" \
-      >> "$slow_blocklist"; then
-    _error "something went wrong building slow blocklist"
-    return 1
-  fi
+      >> "$slow_blocklist"
 
   if [ ! -s "$slow_blocklist" ]; then
     _info echo "NO SLOW BLOCKS"
-    return 0
+    exit 0
   fi
 }
 
@@ -2296,6 +2264,8 @@ fsck_device() {
   escalate
   case $(get_OS) in
     macOS)
+      # Black arts
+      flush_io
       partitions=( $(list_partitions "$device" true) )
       _DEBUG "$device" "$(strip_partition_id "$device")"
       _DEBUG "${partitions[*]}"
@@ -2333,8 +2303,7 @@ fsck_device() {
         esac
       done
       if [ $nr_checked -eq 0 ]; then
-        echo "No recognized volumes on $device"        
-        let result+=1
+        echo "No HFS+ volumes on $device"
       fi
       return $result
       ;;
@@ -2616,6 +2585,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
     exit 0
   fi
 
+  "$(number_format "${OPTARG}")" || exit 1
   Device="$1"
 
   if $Do_Unmount; then
@@ -3094,35 +3064,14 @@ if \
         return 1
       fi
     fi
-
     _info echo "PARTITION OFFSET: $Partition_Offset blocks ($Target: $(get_device_blocksize "$Target") bytes per block)"
 
-    # Check for supported filesystems
-    case $(get_OS) in
-      macOS)
-        if ! is_hfsplus "$Target"; then
-          _error "report: Usupported volume type ($(get_device_format "$Target")) req. HFS+"
-          exit 1
-        fi
-        ;;        
-      Linux)
-        if ! is_hfsplus "$Target" && \
-           ! is_ext "$Target" && \
-           ! is_ntfs "$Target"; then
-          _error "report: Usupported volume type ($(get_device_format "$Target")) req. HFS+, NTFS, ext2, ext3, ext4"
-          exit 1
-        fi
-        # Unmount the target for fsck
-        _info echo "report: Umount and prevent automount..."
-        if ! unmount_device "$Target"; then
-          _error "report: Unmount failed"
-          exit 1
-        fi
-        ;;
-      *)
-        _error "report: Unknown host OS"
-        exit 1
-    esac
+    if ! is_hfsplus "$Target" && \
+       ! is_ext "$Target" && \
+       ! is_ntfs "$Target"; then
+      _error "report: Usupported volume type ($(get_device_format "$Target")) req. HFS+, NTFS, ext2, ext3, ext4"
+      exit 1
+    fi
 
     if $Do_Error_Files_Report; then
       # Report on stdout and saved in report file
@@ -3145,37 +3094,24 @@ if \
         Opt_Slow_Rate=$Opt_Slow_Rate_Default
       fi
 
-      # Remove existing slow block lists if any
-      rm "$Slow_Fsck_Block_List"
-      rm "${Slow_Fsck_Block_List}-EXTENTS"
-
       # Report on stdout and saved in report file
-      if ! create_slow_blocklist \
+      create_slow_blocklist \
         "$Target" \
         "$Rate_Log" \
         "$Slow_Fsck_Block_List" \
         "$Partition_Offset" \
-        "$Opt_Slow_Rate"; then
-         _error "report: failed to create blocklist"
-         exit 1
-      fi
+        "$Opt_Slow_Rate"
 
 #      cat "$Slow_Fsck_Block_List"
-#      exit
-      
+
       if [ -s "$Slow_Fsck_Block_List" ]; then
         fsck_device "$Target" true "$Slow_Fsck_Block_List" | \
-             tee "$Slow_Files_Report"
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-          _info echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
-        else
-          _error "report: report generation failed"
-        fi
+          tee "$Slow_Files_Report"
+        _info echo "report: files affected by slow reads: $Label/$Slow_Files_Report"
       else
         _info echo "report: no slow areas to report"
       fi
 
-    fi    
     exit
   fi
 
@@ -3268,13 +3204,11 @@ if \
      set ylabel \"Rate\nMB/s\"; \
      plot \"-\" using 1:2 title \"$Label\" pt \"|\"" | \
     tee "$Rate_Plot_Report"
-#     set xtics format \"\"; \
 
     _info echo "Plot saved to $Label/$Rate_Plot_Report"
+
+#     set xtics format \"\"; \
+
 fi
 
 cleanup
-
-#######
-# END #
-#######
