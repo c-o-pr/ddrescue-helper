@@ -16,23 +16,22 @@ $(basename "$0"): Usage:
   -c [-X |-M] <label> <source> <destination>
      :: COPY with ddrescue creating bad-block and slow read maps.
      :: Use /dev/null for <destination> to SCAN <source>.
-     :: -X passed to GNU ddrescue scrape during SCAN
-     :: -M passed to GNU ddrescue to retrim
-     :: -R report files affected by reads slower
-           than <rate> (SI prefix allows)
+     -X passed to GNU ddrescue scrape during SCAN
+     -M passed to GNU ddrescue to retrim
 
-  -p | -s [-R <rate>] | -q | -z | -Z [-K] <label> <device>
+  -p | -s [-R <rate> ] | -q | -z | -Z [-K] <label> <device>
      :: REPORT / ZAP
-     -p | -s
-        REPORT files affected by read errors | slow reads.
-          macOS: HFS+
-          Linux: ext2/3/4. NTFS, HFS+
+     -p | -s REPORT files affected by read errors | slow reads.
+        macOS: HFS+
+        Linux: ext2/3/4. NTFS, HFS+
      -q PLOT a graph of the read-rate log on terminal using gluplot.
      -z ZAP PREVIEW: Print a list of bad blocks, but don't try to ZAP them.
      -Z ZAP: Overwrite drive blocks specified by the MAP to help trigger
         <device> to re-allocate underlying sectors. The block is read tested and
         only written if the read fails.
      -K ZAP 4096 byte blocks instead of 512.
+     -R With -s, report files affected by reads slower
+        than <rate> (SI prefix allows)
 
   <device> is a /dev entry for an block storage device. For MOUNT, UNMOUNT or
   FSCK, if <device> is a whole drive, all its partitions are affected. MOUNT and
@@ -418,7 +417,7 @@ dd_supports_direct_io() {
   esac
 }
 
-number_format() {
+SI_number_format() {
   number="$1"
 
   if [[ "$number" =~ ^[0-9]+$ ]]; then
@@ -736,6 +735,7 @@ zap_from_mapfile() {
        _info echo "zap_from_mapfile: ...STOPPED."
        return 1
     fi
+    escalate
     cat "$zap_blocklist" | \
     { \
       total_blocks=0
@@ -2540,7 +2540,7 @@ while getopts ":cfhmpqsuzKMR:XZ" Opt; do
       ;;
     K) Opt_4K=true ;;
     M) Opt_Retrim=true ;;
-    R) if ! Opt_Slow_Rate="$(number_format "$OPTARG" 2> /dev/null)"; then 
+    R) if ! Opt_Slow_Rate="$(SI_number_format "$OPTARG" 2> /dev/null)"; then 
          _error "$(basename "$0"): -R <rate> ($OPTARG) invalid number format"
          exit 1
        fi
@@ -2605,7 +2605,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
      $Do_Zap_Blocks || \
      $Do_Rate_Plot || \
      false; then
-    _error "Incompatible options (1)"
+    _error "Incompatible options (mode 1)"
     exit 1
   fi
 
@@ -2615,8 +2615,9 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
     exit 1
   fi
 
+  # Need a device
   if [ $# -ne 1 ]; then
-    _error "Missing or extra parameter (1)"
+    _error "Missing or extra parameter (mode 1)"
     exit 0
   fi
 
@@ -2624,7 +2625,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Unmount; then
     if $Do_Mount; then
-      _error "Incompatible options (1a)"
+      _error "Incompatible options (mode 1a)"
       exit 1
     fi
     if ! is_device "$Device" false; then
@@ -2641,7 +2642,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Mount; then
     if $Do_Unmount || $Do_Fsck; then
-      _error "Incompatible options (1b)"
+      _error "Incompatible options (mode 1b)"
       exit 1
     fi
 
@@ -2671,7 +2672,7 @@ if $Do_Mount || $Do_Unmount || $Do_Fsck; then
 
   if $Do_Fsck; then
     if $Do_Mount; then
-      _error "Incompatible options (1c)"
+      _error "Incompatible options (mode 1c)"
       exit 1
     fi
     fsck_device "$Device" false
@@ -2684,13 +2685,13 @@ fi
 if $Do_Smart_Scan; then
 
   if \
-     $Do_Mount || $Do_Unmount || $Do_Fsck \
+     $Do_Mount || $Do_Unmount || $Do_Fsck || \
      $Do_Copy || \
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Zap_Blocks || \
      $Do_Rate_Plot || \
      false; then
-    _error "Incompatible options (2)"
+    _error "Incompatible options (mode 2)"
     exit 1
   fi
 
@@ -2713,23 +2714,24 @@ fi
 if $Do_Copy; then
 
   if \
-     $Do_Mount || $Do_Unmount || $Do_Fsck \
+     $Do_Mount || $Do_Unmount || $Do_Fsck || \
      $Do_Smart_Scan || \
      $Do_Error_Files_Report || $Do_Slow_Files_Report || \
      $Do_Zap_Blocks || \
      $Do_Rate_Plot || \
      false; then
-    _error "Incompatible options (2)"
+    _error "Incompatible options (mode 2)"
     exit 1
   fi
 
   if [ "$Opt_Slow_Rate" -ne -1 ]; then
-    _error "Invalid option, -R, in context (2)"
+    _error "Invalid option, -R, in context (mode 2)"
     exit 1
   fi
 
-  if [ $# -ne 1 ]; then
-    _error "Missing or extra parameters (2)"
+  # Need a label, source and destination
+  if [ $# -ne 3 ]; then
+    _error "Missing or extra parameters (mode 2)"
     exit 1
   fi
 
@@ -2984,27 +2986,27 @@ if \
      $Do_Copy || $Do_Smart_Scan || \
      $Do_Rate_Plot || \
      false; then
-    _error "Incompatible options (3)"
+    _error "Incompatible options (mode 3)"
     exit 1
   fi
 
   if ( $Do_Error_Files_Report && $Do_Slow_Files_Report ) || \
      ( $Do_Error_Files_Report && $Do_Zap_Blocks ) || \
      ( $Do_Slow_Files_Report && $Do_Zap_Blocks ); then
-    _error "Incompatible options (3)"
+    _error "Incompatible options (mode 3)"
     exit 1
   fi
 
   if ! $Do_Slow_Files_Report; then
     if [ "$Opt_Slow_Rate" -ne -1 ]; then
-      _error "Invalid option, -R, in context (3)"
+      _error "Invalid option, -R, in context (mode 3)"
       exit 1
     fi
   fi
 
-  # Need a label and metadata
+  # Need a label and device
   if [ $# -ne 2 ]; then
-    _error "Missing or extra parameters (3)"
+    _error "Missing or extra parameters (mode 3)"
     exit 1
   fi
 
@@ -3084,6 +3086,10 @@ if \
   if $Do_Error_Files_Report || $Do_Slow_Files_Report; then
 
     # Verify device is present
+    if [ -f "$Target" ]; then
+      _error "report: target must be a device not a file"
+      exit 1
+    fi
     if ! is_device "$Target"; then
       _error "report: No such device $Target"
       exit 1
@@ -3235,7 +3241,7 @@ if \
     exit 1
   fi
 
-  # Need a label and metadata
+  # Need a label
   if [ $# -ne 1 ]; then
     _error "Missing or extra parameters (3+)"
     exit 1
