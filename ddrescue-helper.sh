@@ -30,8 +30,8 @@ $(basename "$0"): Usage:
         <device> to re-allocate underlying sectors. The block is read tested and
         only written if the read fails.
      -K ZAP 4096 byte blocks instead of 512.
-     -R With -s, report files affected by reads slower
-        than <rate> (SI prefix allows)
+     -R Use with -s to report files affected by reads slower than <rate> 
+        (SI-prefix allowed. e.g., 100K)
 
   <device> is a /dev entry for an block storage device. For MOUNT, UNMOUNT or
   FSCK, if <device> is a whole drive, all its partitions are affected. MOUNT and
